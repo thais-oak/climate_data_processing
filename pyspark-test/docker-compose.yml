@@ -1,0 +1,9 @@
+version: '3'
+services:
+  pyspark:
+    image: bitnami/spark:latest
+    volumes:
+      - .:/app            # monta sua pasta local no contêiner
+      - ./spark-tmp:/tmp  # corrige problema de escrita em /tmp
+    working_dir: /app
+    command: tail -f /dev/null
