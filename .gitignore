@@ -208,6 +208,5 @@ __marimo__/
 
 # dados brutos
 /datasets/*.nc
-/datasets/ec_earth3/tas/*.nc
 /datasets/*.parquet
-/datasets/ec_earth3/tas/*.parquet
+/datasets/ec_earth3/tas/*
