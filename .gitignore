@@ -210,3 +210,5 @@ __marimo__/
 /datasets/*.nc
 /datasets/*.parquet
 /datasets/ec_earth3/tas/*
+/datasets/ec_earth3/*
+datasets/*
