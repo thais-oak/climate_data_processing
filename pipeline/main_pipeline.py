@@ -1,5 +1,5 @@
 # pipelines
-from pipeline.trusted_pipeline import process_variable_trusted
+from pipeline.trusted_pipeline import process_variable_trusted, process_variable_trusted_teste
 from pipeline.raw_pipeline import process_variable_raw
 from pipeline.delivery_pipeline import process_variable_delivery
 
@@ -67,10 +67,11 @@ if __name__ == "__main__":
     }
 
     # execução pipeline raw
-    process_variable_raw(source_id, experiment_id, variable_id, variant_label, dir_modelo_raw)
+    #process_variable_raw(source_id, experiment_id, variable_id, variant_label, dir_modelo_raw)
     
     # execução pipeline trusted
-    process_variable_trusted(variable_id, dir_modelo_raw, dir_modelo_trusted, transform_funcs)
+    #process_variable_trusted(variable_id, dir_modelo_raw, dir_modelo_trusted, transform_funcs)
+    process_variable_trusted_teste(variable_id, dir_modelo_raw, dir_modelo_trusted, transform_funcs)
 
     # execução pipeline delivery
-    process_variable_delivery(variable_id, source_id, experiment_id, dir_modelo_trusted, dir_delivery, grid_step=2.0)
+    #process_variable_delivery(variable_id, source_id, experiment_id, dir_modelo_trusted, dir_delivery, grid_step=2.0)

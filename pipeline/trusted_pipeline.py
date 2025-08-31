@@ -79,6 +79,9 @@ def process_variable_trusted(variable, input_dir, output_dir, map_transform_func
     nc_files_raw_shruken = nc_files_raw[:5]  # para teste, remover depois
 
     ####################
+    # lista para armazenar dataframes spark
+    dfs_spark = []
+    ####################
 
     #for nc_file in nc_files_raw:
     for nc_file in nc_files_raw_shruken:
@@ -98,6 +101,8 @@ def process_variable_trusted(variable, input_dir, output_dir, map_transform_func
         df = add_time_features(df)
         logger_ingestion.info(f"dataframe criado com sucesso")
         
+        # aumentando número de partições para evitar estouro de memória
+        df = df.repartition(50)
         df_spark = spark.createDataFrame(df)
         (
             df_spark.write
@@ -108,5 +113,69 @@ def process_variable_trusted(variable, input_dir, output_dir, map_transform_func
         logger_ingestion.info(f"dados salvos em {output_dir} particionado por year e month")
 
         ds.close()
+
+    logger_ingestion.info(f"pipeline concluído | trusted")
+
+####################
+def process_variable_trusted_teste(variable, input_dir, output_dir, map_transform_funcs):
+    # selecionando a variável
+    #meta = map_variaveis_meta[variable]
+    variavel_escolhida = map_variaveis_meta[variable]
+    logger_ingestion.info(f"variável escolhida: {variavel_escolhida['variable_id']}")
+
+    # origem dos datasets *.nc | camada raw
+    #nc_files = glob.glob(os.path.join(input_dir, "**", "*.nc"), recursive=True)
+    nc_files_raw = glob.glob(os.path.join(input_dir, "**", "*.nc"), recursive=True)
+    nc_files_raw_shruken = nc_files_raw[:5]  # para teste, remover depois
+
+    ####################
+    # lista para armazenar dataframes spark
+    list_spark = []
+    ####################
+
+    #for nc_file in nc_files_raw:
+    for nc_file in nc_files_raw_shruken:
+
+        # carregando dataset
+        ds = xr.open_dataset(nc_file)[variable]
+        logger_ingestion.info(f"arquivo {nc_file} aberto com sucesso")
+
+        # aplica transformações definidas no dicionário
+        for transform in variavel_escolhida["transformations"]:
+            logger_ingestion.info(f"aplicando transformação {transform}")
+            ds = map_transform_funcs[transform](ds)
+
+        # dataframe para Spark
+        df = ds.to_dataframe().reset_index()
+        df["time"] = pd.to_datetime(df["time"])
+        df = add_time_features(df)
+        logger_ingestion.info(f"dataframe criado com sucesso")
+
+        # convertendo para spark dataframe e adiciona à lista
+        df_spark = spark.createDataFrame(df)
+        list_spark.append(df_spark)
+
+        ds.close()
+        
+    # concatenar todos os dataframes spark
+    df_spark_final = list_spark[0]
+    for df_s in list_spark[1:]:
+        df_spark_final = df_spark_final.union(df_s)
+    logger_ingestion.info(f"dataframes concatenados com sucesso")
+    
+    # reparticionando para evitar small files
+    df_spark_final = df_spark_final.repartition(50, "year", "month")
+    logger_ingestion.info(f"dataframe reparticionado com sucesso")
+
+    # salvando em parquet particionado na camada trusted
+    (
+        df_spark_final.write
+        .mode("append")
+        .partitionBy("year", "month")
+        .parquet(output_dir)
+    )
+    logger_ingestion.info(f"dados salvos em {output_dir} particionado por year e month")
+
+        
 
     logger_ingestion.info(f"pipeline concluído | trusted")
