@@ -1,6 +1,7 @@
 # utils
-import os
+import json
 import logging
+import os
 import sys
 
 # manipulação de datas e timezone
@@ -12,13 +13,13 @@ from pyspark.sql import SparkSession
 from pyspark.sql.functions import array, avg, col, concat_ws, expr, collect_list, struct, udf, variance
 
 # pca e redução de dimensionalidade
-from pyspark.ml.feature import VectorAssembler, PCA
+from pyspark.ml.feature import PCA, StandardScaler, VectorAssembler
 from pyspark.ml.regression import LinearRegression
 from pyspark.ml.linalg import Vectors
 from pyspark.ml.stat import Summarizer
-from pyspark.ml.feature import StandardScaler
-from pyspark.ml.functions import array_to_vector
+from pyspark.ml.functions import array_to_vector, vector_to_array
 from pyspark.sql.types import ArrayType, DoubleType, StructType, StructField
+
 
 ####################
 # configurações de timezone
@@ -63,7 +64,7 @@ def configurar_logger(nome_logger):
 logger_read = configurar_logger("leitura_dados")
 logger_ingestion = configurar_logger("ingestao_dados")
 logger_transform = configurar_logger("transformacao_dados")
-
+'''
 def assemble_features(dataframe, target_col=None):
     """
     Função para montar o vetor de features para PCA e regressão linear
@@ -91,11 +92,11 @@ def assemble_features(dataframe, target_col=None):
     logger_transform.info(f"assemble features: colunas numéricas calculadas")
 
     return dataframe_vector, numeric_cols
-
+'''
 def apply_pca(dataframe_vector, n_components=3):
     """
     Aplica PCA para redução de dimensionalidade
-    :param dataframe: DataFrame do Spark com coluna 'features'
+    :param dataframe_vector: DataFrame do Spark com coluna 'features'
     :param n_components: número de componentes principais
     :return: DataFrame com coluna 'pca_features'
     """
@@ -110,6 +111,67 @@ def apply_pca(dataframe_vector, n_components=3):
 
     return dataframe_pca
 
+def apply_lasso_with_pca(df_vector, target_col, use_pca=False, regularization=0.1, feature_map_path=None):
+    """
+    Aplica regressão LASSO com ou sem PCA.
+    
+    :param df_vector: DataFrame Spark com coluna 'features'
+    :param use_pca: se True, aplica LASSO sobre PCA
+    :param target_col: coluna alvo
+    :param regularization: parâmetro alpha do LASSO
+    :param output_path: diretório para salvar o resultado
+    :param feature_map_path: caminho do feature_map.json
+    :return: DataFrame com variáveis explicativas e selecionadas
+    """
+    
+    # input (features originais ou PCA)
+    if use_pca:
+        logger_transform.info(f"inicializando regressão linear LASSO com regularização {regularization} | input: DenseArray com PCA")
+        df_input = df_vector.withColumnRenamed("pca_features", "features")
+    else:
+        logger_transform.info(f"inicializando regressão linear LASSO com regularização {regularization} | input: DenseArray sem PCA")
+        df_input = df_vector.withColumnRenamed("features", "features")
+
+    # ajustando modelo lasso
+    lasso = LinearRegression(featuresCol="features", labelCol=target_col, elasticNetParam=1.0, regParam=regularization)
+
+    lasso_model = lasso.fit(df_input)
+
+    # extraindo coeficientes não nulos (seleção de features)
+    logger_transform.info(f"extraindo coeficientes não-nulos (seleção de features)")
+    coeffs = lasso_model.coefficients.toArray()
+    selected_idx = [i for i, c in enumerate(coeffs) if abs(c) > 1e-6]
+
+    mse = lasso_model.summary.meanSquaredError
+    r2 = lasso_model.summary.r2
+
+    logger_transform.info(f"LASSO MSE: {mse: .5f}")
+    logger_transform.info(f"LASSO R²: {r2: .5f}")
+
+    # se houver feature_map, traduzir índices → (lat, lon)
+    feature_names = []
+    if feature_map_path and os.path.exists(feature_map_path):
+        logger_transform.info(f"lendo feature map para identificar índices")
+        with open(feature_map_path, "r", encoding="utf-8") as f:
+            feature_map = json.load(f)
+        feature_names = [feature_map[f"f{i}"] for i in selected_idx]
+    else:
+        logger_transform.info(f"varredura para identificar índices")
+        feature_names = [f"f{i}" for i in selected_idx]
+
+    # construindo dataframe final
+    logger_transform.info(f"construção do dataframe com features selecionadas")
+    df_processed = df_input.select("year", "month", target_col, "features")
+    
+    # converter DenseVector → array<double>
+    df_processed = df_processed.withColumn("features_array", vector_to_array("features"))
+
+    # adicionar colunas para features selecionadas
+    for idx, name in zip(selected_idx, feature_names):
+        #df_processed = df_processed.withColumn(f"sel_{idx}", df_processed.features[idx])
+        df_processed = df_processed.withColumn(f"sel_{idx}", df_processed.features_array[idx])
+
+    return df_processed, selected_idx, feature_names
 
 def apply_lasso(dataframe_vector, target_col, pca_marker, regularization=0.1):
     """
@@ -119,6 +181,7 @@ def apply_lasso(dataframe_vector, target_col, pca_marker, regularization=0.1):
     :param regularization: parâmetro de regularização (lambda)
     :return: modelo treinado e DataFrame com previsões
     """
+
     if pca_marker:
         logger_transform.info(f"inicializando regressão linear LASSO com regularização {regularization} | input: DenseArray sem PCA")
     else:
@@ -159,10 +222,17 @@ def apply_lasso(dataframe_vector, target_col, pca_marker, regularization=0.1):
 
 
 
+'''
 def process_variable_delivery_with_algorithms(variable_id, input_model, input_experiment_id,
                                               dir_trusted, dir_delivery, target_col, grid_step=2.0,
                                               apply_pca_flag=False, apply_lasso_flag=False,
                                               lasso_target_strategy="mean", n_pca_components=3, lasso_regularization=0.1):
+'''    
+def process_variable_delivery_with_algorithms(variable_id, input_model, input_experiment_id,
+                                              dir_trusted, dir_delivery, grid_step=2.0,
+                                              apply_pca_flag=False, apply_lasso_flag=False,
+                                              lasso_target_strategy="mean", n_pca_components=3, lasso_regularization=0.1):
+
     """
     pipeline da ingestão na delivery:
     1. leitura dos dados da trusted (todos os anos)
@@ -178,6 +248,11 @@ def process_variable_delivery_with_algorithms(variable_id, input_model, input_ex
     :param dir_trusted: diretório da camada Trusted
     :param dir_delivery: diretório para salvar a camada Delivery
     :param grid_step: resolução em graus (default 2.0°)
+    :param apply_pca_flag: indica se deve aplicar fase de processamento com PCA
+    :param apply_lasso_flag: indica se deve aplicar fase de processamento com LASSO
+    :param lasso_target_strategy: tipo de agregação a ser aplicada para as features input do LASSO
+    :param n_pca_components: quantidade de componentes principais a serem calculadas para o PCA
+    :param lasso_regularization: fator de regularização, que deve ser 0.1 para regularização LASSO
     """
 
     logger_ingestion.info(f"inicializando pipeline | delivery")
@@ -186,7 +261,7 @@ def process_variable_delivery_with_algorithms(variable_id, input_model, input_ex
     # Iniciar sessão spark
     spark = SparkSession.builder.appName("ClimateData").getOrCreate()
 
-    # 1. leitura dos dados da trusted (todos os anos)
+    # leitura dos dados da trusted (todos os anos)
     logger_ingestion.info(f"lendo todos os arquivos da camada trusted em {dir_trusted}")
     df_trusted = spark.read.parquet(dir_trusted)
 
@@ -203,6 +278,8 @@ def process_variable_delivery_with_algorithms(variable_id, input_model, input_ex
     # reamostragem espacial: arredondando lat/lon para grid_step
     logger_transform.info(f"reamostrando para resolução {grid_step}°")
 
+    df_trusted = df_trusted.repartition(50)
+
     df_resampled = (
         df_trusted
         .withColumn("lat_grid", (col("lat") / grid_step).cast("int") * grid_step)
@@ -210,6 +287,8 @@ def process_variable_delivery_with_algorithms(variable_id, input_model, input_ex
         .groupBy("year", "month", "lat_grid", "lon_grid")
         .agg(avg(variable_id).alias(f"{variable_id}_mean"))
     )
+
+    df_resampled = df_resampled.repartition(50)
 
     # calculando a variância do dataframe
     var_df = df_resampled.select(variance(df_resampled.tas_mean).alias("var"))
@@ -223,57 +302,80 @@ def process_variable_delivery_with_algorithms(variable_id, input_model, input_ex
     logger_transform.info("agrupando todos os gridpoints em uma única lista por ano/mês")
     df_vector_ready = (df_resampled
                     .groupBy("year", "month")
-                    .agg(collect_list(f"{variable_id}_mean")
-                            .alias("grid_list")))
+                    .agg(collect_list(f"{variable_id}_mean").alias("grid_list"),
+                        collect_list(struct("lat_grid", "lon_grid")).alias("grid_coords"))
+                    )
     logger_transform.info(f"agrupamento concluído")
 
     # convertendo array<double> → DenseVector
     #df_vector = df_vector_ready.withColumn("features", array_to_vector("grid_list"))
     df_vector = (df_vector_ready
                 .withColumn("features", array_to_vector("grid_list"))
-                .withColumn("tas_mean", expr("AGGREGATE(grid_list, 0D, (acc, x) -> acc + x) / size(grid_list)"))
+                .withColumn(f"{variable_id}_mean", expr("AGGREGATE(grid_list, 0D, (acc, x) -> acc + x) / size(grid_list)"))
                 )
+    target_col_name = f"{variable_id}_{lasso_target_strategy}"
+
+    # nomes das colunas de grid
+    n_features = df_vector.selectExpr("size(grid_list) as n").first()["n"]
+    feature_names = [f"f{i}" for i in range(n_features)]
+
+    logger_ingestion.info(f"construindo dicionário de mapeamento feature —> (lat, lon)")
+    # construindo dicionário de mapeamento feature -> (lat, lon)
+    coords_example = df_vector.select("grid_coords").first()["grid_coords"]
+    feature_map = {f"f{i}": (row["lat_grid"], row["lon_grid"]) for i, row in enumerate(coords_example)}
+
+    # salvar JSON no diretório de saída
+    feature_map_dir = os.path.join(dir_delivery, input_model, variable_id,
+                                    f"exp={input_experiment_id}",
+                                    f"pca={apply_pca_flag}",
+                                    f"lasso={apply_lasso_flag}",
+                                    "feature_map.json")
+
+    os.makedirs(os.path.dirname(feature_map_dir), exist_ok=True)
+
+    with open(feature_map_dir, "w", encoding="utf-8") as f:
+        json.dump(feature_map, f, indent=2)
+
+    logger_ingestion.info(f"feature_map salvo em {feature_map_dir}")
 
     if apply_lasso_flag or apply_pca_flag:
 
         if lasso_target_strategy == "mean":
             logger_ingestion.info(f"lasso_target_strategy: {lasso_target_strategy}")
             #df_flatten = df_flatten.withColumn("lasso_target", expr("aggregate(grid_array, 0D, (acc, x) -> acc + x) / size(grid_array)"))
-            df_vector = df_vector.withColumn(f"{variable_id}_{lasso_target_strategy}", expr("aggregate(grid_list, 0D, (acc, x) -> acc + x) / size(grid_list)"))
+            df_vector = df_vector.withColumn(f"{target_col_name}", expr("aggregate(grid_list, 0D, (acc, x) -> acc + x) / size(grid_list)"))
         elif lasso_target_strategy == "max":
             logger_ingestion.info(f"lasso_target_strategy: {lasso_target_strategy}")
             #df_flatten = df_flatten.withColumn("lasso_target", expr("aggregate(grid_array, -1D/0D, (acc, x) -> IF(x > acc, x, acc))"))
-            df_vector = df_vector.withColumn(f"{variable_id}_{lasso_target_strategy}", expr("aggregate(grid_list, -1D/0D, (acc, x) -> IF(x > acc, x, acc))"))
+            df_vector = df_vector.withColumn(f"{target_col_name}", expr("aggregate(grid_list, -1D/0D, (acc, x) -> IF(x > acc, x, acc))"))
         elif lasso_target_strategy == "min":
             logger_ingestion.info(f"lasso_target_strategy: {lasso_target_strategy}")
             #df_flatten = df_flatten.withColumn("lasso_target", expr("aggregate(grid_array, 1D/0D, (acc, x) -> IF(x < acc, x, acc))"))
-            df_vector = df_vector.withColumn(f"{variable_id}_{lasso_target_strategy}", expr("aggregate(grid_list, 1D/0D, (acc, x) -> IF(x < acc, x, acc))"))
+            df_vector = df_vector.withColumn(f"{target_col_name}", expr("aggregate(grid_list, 1D/0D, (acc, x) -> IF(x < acc, x, acc))"))
         else:
             raise ValueError(f"valor inválido para lasso_target_strategy: {lasso_target_strategy}")
 
     logger_transform.info(f"conversão de array<double> para DenseVector concluída")
+
+    # salvando em outra variável para compatibilidade com o restante do processamento
     df_processed = df_vector
 
     # [opcional] aplicar PCA para redução de dimensionalidade
     if apply_pca_flag:
         # aplica apenas PCA
-        df_processed = apply_pca(df_vector, n_components=n_pca_components)
+        df_processed = apply_pca(df_processed, n_components=n_pca_components)
     else:
         logger_transform.info("PCA não aplicado")
-
-    # aplicar regressão linear com Lasso para seleção de features
-    if apply_lasso_flag and apply_pca_flag:
-        # PCA e LASSO
-        df_processed = apply_lasso(df_processed, pca_marker=apply_pca_flag, target_col=target_col, regularization=lasso_regularization)
     
-    elif apply_lasso_flag and not apply_pca_flag:
-        # apenas LASSO
-        df_processed = apply_lasso(df_vector, pca_marker=apply_pca_flag, target_col=target_col, regularization=lasso_regularization)
+    ##########
+    if apply_lasso_flag:
+        df_processed, selected_idx, feature_names = apply_lasso_with_pca(df_processed, target_col_name, apply_pca_flag, regularization=lasso_regularization, feature_map_path=feature_map_dir)
     else:
         logger_transform.info("LASSO não aplicado")
+    ##########
 
     # 6. salvando em parquet particionado
-    output_path = os.path.join(dir_delivery, input_model, variable_id)
+    #output_path = os.path.join(dir_delivery, input_model, variable_id)
     output_path = os.path.join(dir_delivery, input_model, variable_id, f"exp={input_experiment_id}", f"pca={apply_pca_flag}", f"lasso={apply_lasso_flag}")
     
     (
@@ -331,7 +433,7 @@ def process_variable_delivery(variable_id, input_model, input_experiment_id, dir
         .agg(avg(variable_id).alias(f"{variable_id}_mean"))
     )
 
-    # 3. Flatten: transformar lat/lon em colunas (tempo x gridpoints)
+    # Flatten: transformar lat/lon em colunas (tempo x gridpoints)
     logger_ingestion.info("fazendo pivot para formato flatten")
     df_resampled = df_resampled.withColumn("lat_lon", concat_ws("_", col("lat_grid"), col("lon_grid")))
 
