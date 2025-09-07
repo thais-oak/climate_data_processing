@@ -56,9 +56,9 @@ def configurar_logger(nome_logger):
 logger_read = configurar_logger("leitura_dados")
 logger_ingestion = configurar_logger("ingestao_dados")
 ####################
-logger_read.info(f"inicializando pipeline | raw")
-####################
 def process_variable_raw(input_model, input_experiment_id, input_variable_id, input_variant_label, output_dir):
+    ####################
+    logger_read.info(f"inicializando pipeline | raw")
     # conexão com ESGF e busca dos datasets
     conn = SearchConnection("https://esgf-data.dkrz.de/esg-search", distrib=False)
     try:

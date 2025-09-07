@@ -1,6 +1,6 @@
 # pipelines
 from pipeline.raw_pipeline import process_variable_raw
-from pipeline.trusted_pipeline import process_variable_trusted, process_variable_trusted_teste
+from pipeline.trusted_pipeline import process_variable_trusted
 from pipeline.delivery_pipeline import process_variable_delivery
 
 # metadados variáveis e modelos
@@ -73,5 +73,6 @@ if __name__ == "__main__":
     #process_variable_trusted(variable_id, dir_modelo_raw, dir_modelo_trusted, transform_funcs)
     #process_variable_trusted_teste(variable_id, dir_modelo_raw, dir_modelo_trusted, transform_funcs)
 
+    # variable_id, input_model, input_experiment_id, input_dir, output_dir, grid_step=2.0, apply_pca_flag=False, apply_lasso_flag=False, lasso_target_strategy="mean", n_pca_components=3, lasso_regularization=0.1
     # execução pipeline delivery
-    process_variable_delivery(variable_id, source_id, experiment_id, dir_modelo_trusted, dir_delivery, grid_step=2.0, apply_lasso_flag=True, apply_pca_flag=True, lasso_target_strategy="mean")
+    #process_variable_delivery(variable_id, source_id, experiment_id, dir_modelo_trusted, dir_modelo_delivery, grid_step=2.0, apply_lasso_flag=True, apply_pca_flag=True, lasso_target_strategy="mean")

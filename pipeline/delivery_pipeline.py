@@ -146,10 +146,9 @@ def apply_lasso(df_vector, target_col, use_pca=False, regularization=0.1, featur
 
     return df_processed, selected_idx, feature_names
    
-def process_variable_delivery(variable_id, input_model, input_experiment_id,
-                                              dir_trusted, dir_delivery, grid_step=2.0,
-                                              apply_pca_flag=False, apply_lasso_flag=False,
-                                              lasso_target_strategy="mean", n_pca_components=3, lasso_regularization=0.1):
+def process_variable_delivery(variable_id, input_model, input_experiment_id, input_dir, output_dir,
+                                grid_step=2.0, apply_pca_flag=False, apply_lasso_flag=False,
+                                lasso_target_strategy="mean", n_pca_components=3, lasso_regularization=0.1):
 
     """
     pipeline da ingestão na delivery:
@@ -180,8 +179,8 @@ def process_variable_delivery(variable_id, input_model, input_experiment_id,
     spark = SparkSession.builder.appName("ClimateData").getOrCreate()
 
     # leitura dos dados da trusted (todos os anos)
-    logger_ingestion.info(f"lendo todos os arquivos da camada trusted em {dir_trusted}")
-    df_trusted = spark.read.parquet(dir_trusted)
+    logger_ingestion.info(f"lendo todos os arquivos da camada trusted em {input_dir}")
+    df_trusted = spark.read.parquet(input_dir)
 
     # verificando se há dados
     if df_trusted.count() == 0:
@@ -243,7 +242,7 @@ def process_variable_delivery(variable_id, input_model, input_experiment_id,
     feature_map = {f"f{i}": (row["lat_grid"], row["lon_grid"]) for i, row in enumerate(coords_example)}
 
     # salvar JSON no diretório de saída
-    feature_map_dir = os.path.join(dir_delivery, input_model, variable_id,
+    feature_map_dir = os.path.join(output_dir,
                                     f"exp={input_experiment_id}",
                                     f"pca={apply_pca_flag}",
                                     f"lasso={apply_lasso_flag}",
@@ -294,7 +293,7 @@ def process_variable_delivery(variable_id, input_model, input_experiment_id,
 
     # 6. salvando em parquet particionado
     #output_path = os.path.join(dir_delivery, input_model, variable_id)
-    output_path = os.path.join(dir_delivery, input_model, variable_id, f"exp={input_experiment_id}", f"pca={apply_pca_flag}", f"lasso={apply_lasso_flag}")
+    output_path = os.path.join(output_dir, f"exp={input_experiment_id}", f"pca={apply_pca_flag}", f"lasso={apply_lasso_flag}")
     
     (
         df_processed.write

@@ -20,9 +20,6 @@ from config.variables_config import map_variaveis_meta
 from transformations.temporal import add_time_features
 from config.variables_config import map_variaveis_meta
 ####################
-# iniciar sessão spark
-spark = SparkSession.builder.appName("ClimateData").getOrCreate()
-####################
 # configurações de timezone
 selected_tz = pytz.timezone("America/Sao_Paulo")
 ####################
@@ -65,20 +62,25 @@ def configurar_logger(nome_logger):
 logger_read = configurar_logger("leitura_dados")
 logger_ingestion = configurar_logger("ingestao_dados")
 ####################
-logger_ingestion.info(f"inicializando pipeline | trusted")
-####################
 def process_variable_trusted(variable_id, input_dir, output_dir, map_transform_funcs):
     """
     pipeline para ingestão na camada trusted
     1. leitura dos dados da raw
     2. transformação dos dados de acordo com o mapeamento de map_transform_funcs
     3. armazenamento na camada trusted em parquet
-    
+
     :param variable_id: variável climática (ex: "tas")
     :param input_dir: diretório da camada raw com os datasets
     :param output_dir: diretório da camada trusted para salvar os dataframes processados
     :param map_transform_funcs: dicionário com as variáveis e suas respectivas transformações
     """
+    ####################
+    logger_ingestion.info(f"inicializando pipeline | trusted")
+    ####################
+    # iniciar sessão spark
+    spark = SparkSession.builder.appName("ClimateData").getOrCreate()
+    ####################
+
     # selecionando a variável
     #meta = map_variaveis_meta[variable_id]
     variavel_escolhida = map_variaveis_meta[variable_id]
