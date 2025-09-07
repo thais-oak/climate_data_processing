@@ -67,60 +67,21 @@ logger_ingestion = configurar_logger("ingestao_dados")
 ####################
 logger_ingestion.info(f"inicializando pipeline | trusted")
 ####################
-def process_variable_trusted(variable, input_dir, output_dir, map_transform_funcs):
+def process_variable_trusted(variable_id, input_dir, output_dir, map_transform_funcs):
+    """
+    pipeline para ingestão na camada trusted
+    1. leitura dos dados da raw
+    2. transformação dos dados de acordo com o mapeamento de map_transform_funcs
+    3. armazenamento na camada trusted em parquet
+    
+    :param variable_id: variável climática (ex: "tas")
+    :param input_dir: diretório da camada raw com os datasets
+    :param output_dir: diretório da camada trusted para salvar os dataframes processados
+    :param map_transform_funcs: dicionário com as variáveis e suas respectivas transformações
+    """
     # selecionando a variável
-    #meta = map_variaveis_meta[variable]
-    variavel_escolhida = map_variaveis_meta[variable]
-    logger_ingestion.info(f"variável escolhida: {variavel_escolhida['variable_id']}")
-
-    # origem dos datasets *.nc | camada raw
-    #nc_files = glob.glob(os.path.join(input_dir, "**", "*.nc"), recursive=True)
-    nc_files_raw = glob.glob(os.path.join(input_dir, "**", "*.nc"), recursive=True)
-    nc_files_raw_shruken = nc_files_raw[:5]  # para teste, remover depois
-
-    ####################
-    # lista para armazenar dataframes spark
-    dfs_spark = []
-    ####################
-
-    #for nc_file in nc_files_raw:
-    for nc_file in nc_files_raw_shruken:
-
-        # carregando dataset
-        ds = xr.open_dataset(nc_file)[variable]
-        logger_ingestion.info(f"arquivo {nc_file} aberto com sucesso")
-
-        # aplica transformações definidas no dicionário
-        for transform in variavel_escolhida["transformations"]:
-            logger_ingestion.info(f"aplicando transformação {transform}")
-            ds = map_transform_funcs[transform](ds)
-
-        # dataframe para Spark
-        df = ds.to_dataframe().reset_index()
-        df["time"] = pd.to_datetime(df["time"])
-        df = add_time_features(df)
-        logger_ingestion.info(f"dataframe criado com sucesso")
-        
-        # aumentando número de partições para evitar estouro de memória
-        df = df.repartition(50)
-        df_spark = spark.createDataFrame(df)
-        (
-            df_spark.write
-            .mode("append")
-            .partitionBy("year", "month")
-            .parquet(output_dir)
-        )
-        logger_ingestion.info(f"dados salvos em {output_dir} particionado por year e month")
-
-        ds.close()
-
-    logger_ingestion.info(f"pipeline concluído | trusted")
-
-####################
-def process_variable_trusted_teste(variable, input_dir, output_dir, map_transform_funcs):
-    # selecionando a variável
-    #meta = map_variaveis_meta[variable]
-    variavel_escolhida = map_variaveis_meta[variable]
+    #meta = map_variaveis_meta[variable_id]
+    variavel_escolhida = map_variaveis_meta[variable_id]
     logger_ingestion.info(f"variável escolhida: {variavel_escolhida['variable_id']}")
 
     # origem dos datasets *.nc | camada raw
@@ -137,7 +98,7 @@ def process_variable_trusted_teste(variable, input_dir, output_dir, map_transfor
     for nc_file in nc_files_raw_shruken:
 
         # carregando dataset
-        ds = xr.open_dataset(nc_file)[variable]
+        ds = xr.open_dataset(nc_file)[variable_id]
         logger_ingestion.info(f"arquivo {nc_file} aberto com sucesso")
 
         # aplica transformações definidas no dicionário
@@ -174,8 +135,6 @@ def process_variable_trusted_teste(variable, input_dir, output_dir, map_transfor
         .partitionBy("year", "month")
         .parquet(output_dir)
     )
+
     logger_ingestion.info(f"dados salvos em {output_dir} particionado por year e month")
-
-        
-
     logger_ingestion.info(f"pipeline concluído | trusted")
