@@ -78,7 +78,15 @@ def process_variable_trusted(variable_id, input_dir, output_dir, map_transform_f
     logger_ingestion.info(f"inicializando pipeline | trusted")
     ####################
     # iniciar sessão spark
-    spark = SparkSession.builder.appName("ClimateData").getOrCreate()
+    # glue context
+    from pyspark.context import SparkContext
+    from awsglue.context import GlueContext
+
+    sc = SparkContext.getOrCreate()
+    glue_context = GlueContext(sc)
+    spark = glue_context.spark_session
+
+    #spark = SparkSession.builder.appName("ClimateData").getOrCreate()
     ####################
 
     # selecionando a variável

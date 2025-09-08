@@ -175,8 +175,16 @@ def process_variable_delivery(variable_id, input_model, input_experiment_id, inp
     logger_ingestion.info(f"inicializando pipeline | delivery")
     logger_ingestion.info(f"variável: {variable_id} | modelo: {input_model} | experimento: {input_experiment_id}")
 
-    # Iniciar sessão spark
-    spark = SparkSession.builder.appName("ClimateData").getOrCreate()
+    # iniciar sessão spark
+    # glue context
+    from pyspark.context import SparkContext
+    from awsglue.context import GlueContext
+
+    sc = SparkContext.getOrCreate()
+    glue_context = GlueContext(sc)
+    spark = glue_context.spark_session
+
+    #spark = SparkSession.builder.appName("ClimateData").getOrCreate()
 
     # leitura dos dados da trusted (todos os anos)
     logger_ingestion.info(f"lendo todos os arquivos da camada trusted em {input_dir}")

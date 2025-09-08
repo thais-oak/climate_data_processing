@@ -212,3 +212,6 @@ __marimo__/
 /datasets/ec_earth3/tas/*
 /datasets/ec_earth3/*
 datasets/*
+
+/glue_libs/*
+libs.zip
