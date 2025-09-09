@@ -25,42 +25,42 @@ map_variaveis_meta = {
         "variable_long_name": "Surface Air Pressure",
         "experiment_id": "historical",
         "variant_label": "r1i1p1f1",
-        "transformations": ["fix_longitude", "select_latam"]
+        "transformations": ["fix_longitude", "select_latam", "remove_outliers"]
     },
     "pr": {
         "variable_id": "pr",
         "variable_long_name": "Precipitation",
         "experiment_id": "historical",
         "variant_label": "r1i1p1f1",
-        "transformations": ["fix_longitude", "select_latam"]
+        "transformations": ["fix_longitude", "select_latam", "remove_outliers"]
     },
     "hur": {
         "variable_id": "hur",
         "variable_long_name": "Relative Humidity",
         "experiment_id": "historical",
         "variant_label": "r1i1p1f1",
-        "transformations": ["fix_longitude", "select_latam"]
+        "transformations": ["fix_longitude", "select_latam", "remove_outliers"]
     },
     "rsds": {
         "variable_id": "rsds",
         "variable_long_name": "Downward Shortwave Radiation Flux at Surface",
         "experiment_id": "historical",
         "variant_label": "r1i1p1f1",
-        "transformations": ["fix_longitude", "select_latam"]
+        "transformations": ["fix_longitude", "select_latam", "remove_outliers"]
     },
     "rlut": {
         "variable_id": "rlut",
         "variable_long_name": "Upward Longwave Radiation Flux at Top of Atmosphere",
         "experiment_id": "historical",
         "variant_label": "r1i1p1f1",
-        "transformations": ["fix_longitude", "select_latam"]
+        "transformations": ["fix_longitude", "select_latam", "remove_outliers"]
     },
     "uas": {
         "variable_id": "uas",
         "variable_long_name": "Eastward Wind Component at 10m",
         "experiment_id": "historical",
         "variant_label": "r1i1p1f1",
-        "transformations": ["fix_longitude", "select_latam"]
+        "transformations": ["fix_longitude", "select_latam", "remove_outliers"]
     },
     "tos": {
         "variable_id": "tos",

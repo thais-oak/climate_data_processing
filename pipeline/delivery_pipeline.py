@@ -177,14 +177,14 @@ def process_variable_delivery(variable_id, input_model, input_experiment_id, inp
 
     # iniciar sessão spark
     # glue context
-    from pyspark.context import SparkContext
-    from awsglue.context import GlueContext
+    #from pyspark.context import SparkContext
+    #from awsglue.context import GlueContext
 
-    sc = SparkContext.getOrCreate()
-    glue_context = GlueContext(sc)
-    spark = glue_context.spark_session
+    #sc = SparkContext.getOrCreate()
+    #glue_context = GlueContext(sc)
+    #spark = glue_context.spark_session
 
-    #spark = SparkSession.builder.appName("ClimateData").getOrCreate()
+    spark = SparkSession.builder.appName("ClimateData").getOrCreate()
 
     # leitura dos dados da trusted (todos os anos)
     logger_ingestion.info(f"lendo todos os arquivos da camada trusted em {input_dir}")
@@ -216,7 +216,8 @@ def process_variable_delivery(variable_id, input_model, input_experiment_id, inp
     df_resampled = df_resampled.repartition(50)
 
     # calculando a variância do dataframe
-    var_df = df_resampled.select(variance(df_resampled.tas_mean).alias("var"))
+    #var_df = df_resampled.select(variance(df_resampled.tas_mean).alias("var"))
+    var_df = df_resampled.select(variance(df_resampled[f"{variable_id}_mean"]).alias("var"))
 
     # valor como variável (float)
     var_value = var_df.first()["var"]

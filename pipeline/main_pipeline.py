@@ -68,10 +68,11 @@ if __name__ == "__main__":
 
     # execução pipeline raw
     #process_variable_raw(source_id, experiment_id, variable_id, variant_label, dir_modelo_raw)
-    
+    #process_variable_raw_teste(source_id, experiment_id, variable_id, variant_label, dir_modelo_raw)
+    process_variable_raw(source_id, experiment_id, variable_id, variant_label, dir_modelo_raw, year_min=None, year_max=None, year_list=[1910, 1911, 1912, 1913, 1914, 1915, 1916, 1917, 1918, 1919])
+
     # execução pipeline trusted
     #process_variable_trusted(variable_id, dir_modelo_raw, dir_modelo_trusted, transform_funcs)
-    #process_variable_trusted_teste(variable_id, dir_modelo_raw, dir_modelo_trusted, transform_funcs)
 
     # variable_id, input_model, input_experiment_id, input_dir, output_dir, grid_step=2.0, apply_pca_flag=False, apply_lasso_flag=False, lasso_target_strategy="mean", n_pca_components=3, lasso_regularization=0.1
     # execução pipeline delivery

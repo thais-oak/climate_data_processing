@@ -79,14 +79,14 @@ def process_variable_trusted(variable_id, input_dir, output_dir, map_transform_f
     ####################
     # iniciar sessão spark
     # glue context
-    from pyspark.context import SparkContext
-    from awsglue.context import GlueContext
+    #from pyspark.context import SparkContext
+    #from awsglue.context import GlueContext
 
-    sc = SparkContext.getOrCreate()
-    glue_context = GlueContext(sc)
-    spark = glue_context.spark_session
+    #sc = SparkContext.getOrCreate()
+    #glue_context = GlueContext(sc)
+    #spark = glue_context.spark_session
 
-    #spark = SparkSession.builder.appName("ClimateData").getOrCreate()
+    spark = SparkSession.builder.appName("ClimateData").getOrCreate()
     ####################
 
     # selecionando a variável
@@ -97,7 +97,7 @@ def process_variable_trusted(variable_id, input_dir, output_dir, map_transform_f
     # origem dos datasets *.nc | camada raw
     #nc_files = glob.glob(os.path.join(input_dir, "**", "*.nc"), recursive=True)
     nc_files_raw = glob.glob(os.path.join(input_dir, "**", "*.nc"), recursive=True)
-    nc_files_raw_shruken = nc_files_raw[:5]  # para teste, remover depois
+    nc_files_raw_shruken = nc_files_raw#[:5]  # para teste, remover depois
 
     ####################
     # lista para armazenar dataframes spark
