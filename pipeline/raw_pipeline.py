@@ -2,6 +2,7 @@ import xarray as xr
 import os
 import sys
 import glob
+import json
 
 from collections import Counter, defaultdict
 import logging
@@ -178,6 +179,149 @@ def process_variable_raw(input_model, input_experiment_id, input_variable_id, in
     ####################
 ####################
 
+
+def process_variable_raw_teste_freqs(input_model,
+                         input_experiment_id,
+                         input_variable_id,
+                         input_variant_label,
+                         output_dir,
+                         table_id="Amon",
+                         frequency="mon",
+                         year_min=None,
+                         year_max=None,
+                         year_list=None):
+    """
+    Ingestão da variável climática na camada RAW (CMIP6 via ESGF).
+
+    Args:
+        input_model (str): Modelo climático (ex.: "EC-Earth3").
+        input_experiment_id (str): Experimento (ex.: "historical").
+        input_variable_id (str): Variável (ex.: "tas").
+        input_variant_label (str): Variante (ex.: "r1i1p1f1").
+        output_dir (str): Diretório base da camada RAW.
+        table_id (str): Tabela (ex.: "Amon" para mensal, "day" para diário).
+        frequency (str): Frequência temporal ("mon", "day").
+        year_min, year_max (int): Filtros opcionais por ano inicial/final.
+        year_list (list[int]): Lista explícita de anos a baixar.
+
+    Estrutura de saída:
+        raw/<model>/<variable>/exp=<experiment>/freq=<frequency>/year=<YYYY>/<file>.nc
+        raw/<model>/<variable>/exp=<experiment>/manifest.json
+    """
+
+    ####################
+    logger_read.info(f"inicializando pipeline | raw")
+    logger_read.info(f"config: model={input_model}, exp={input_experiment_id}, var={input_variable_id}, table={table_id}, freq={frequency}")
+
+    # conexão com ESGF
+    conn = SearchConnection("https://esgf-data.dkrz.de/esg-search", distrib=False)
+    try:
+        ctx = conn.new_context(
+            project="CMIP6",
+            source_id=input_model,
+            experiment_id=input_experiment_id,
+            variable_id=input_variable_id,
+            table_id=table_id,
+            frequency=frequency,
+            variant_label=input_variant_label,
+        )
+
+        if ctx.hit_count == 0:
+            logger_read.warning("nenhum dataset encontrado no ESGF com esses filtros")
+            return
+
+        result = ctx.search()[0]
+        files = result.file_context().search()
+        logger_read.info(f"dataset encontrado | total de partições = {len(files)}")
+
+    except Exception as e:
+        logger_read.error(f"erro de leitura da variável {input_variable_id} | modelo {input_model} | {input_experiment_id}:\n{e}")
+        return
+
+    ####################
+    # ingestão dos arquivos
+    list_nc_files = []
+    decadas = defaultdict(int)
+
+    for dataset_file in files:
+        file_name = dataset_file.json["title"]
+        url = dataset_file.download_url
+
+        # extrair período do arquivo (YYYYMM-YYYYMM ou YYYY-YYYY)
+        period = file_name.split("_")[-1].replace(".nc", "")
+        period_start, period_end = None, None
+        try:
+            period_start = period.split("-")[0]
+            period_end = period.split("-")[1]
+            start_year = int(period_start[:4])
+            end_year = int(period_end[:4])
+        except Exception:
+            logger_read.warning(f"não foi possível extrair anos de {file_name}, pulando")
+            continue
+
+        # filtros
+        if year_min and end_year < year_min:
+            continue
+        if year_max and start_year > year_max:
+            continue
+        if year_list:
+            anos_arquivo = set(range(start_year, end_year + 1))
+            if not any(ano in anos_arquivo for ano in year_list):
+                continue
+
+        decada = (start_year // 10) * 10
+        decadas[decada] += 1
+
+        # diretório de saída
+        year_dir = os.path.join(
+            output_dir,
+            #input_model,
+            #input_variable_id,
+            f"exp={input_experiment_id}",
+            f"freq={frequency}",
+            f"year={start_year}"
+        )
+        os.makedirs(year_dir, exist_ok=True)
+        file_path = os.path.join(year_dir, file_name)
+
+        logger_read.info(f"baixando arquivo: {file_name}")
+        try:
+            response = requests.get(url)
+            with open(file_path, "wb") as f:
+                f.write(response.content)
+            if os.path.exists(file_path):
+                list_nc_files.append(file_path)
+                logger_ingestion.info(f"arquivo salvo em {file_path}")
+        except Exception as e:
+            logger_ingestion.error(f"erro ao baixar {file_name}: {e}")
+
+    ####################
+    # salvar manifesto JSON
+    if list_nc_files:
+        manifest = {
+            "model": input_model,
+            "experiment": input_experiment_id,
+            "variable": input_variable_id,
+            "variant_label": input_variant_label,
+            "table_id": table_id,
+            "frequency": frequency,
+            "downloaded_files": [os.path.basename(f) for f in list_nc_files],
+            "years": sorted({int(os.path.basename(f).split("_")[-1][:4]) for f in list_nc_files}),
+        }
+        manifest_path = os.path.join(
+            output_dir,
+            #input_model,
+            #input_variable_id,
+            f"exp={input_experiment_id}",
+            f"freq={frequency}",
+            f"manifest_{input_variable_id}_{input_model.lower()}_{input_experiment_id}_{frequency}.json"
+        )
+        os.makedirs(os.path.dirname(manifest_path), exist_ok=True)
+        with open(manifest_path, "w", encoding="utf-8") as f:
+            json.dump(manifest, f, indent=2)
+        logger_ingestion.info(f"manifesto salvo em {manifest_path}")
+
+    logger_read.info(f"pipeline concluído | raw | arquivos salvos={len(list_nc_files)}")
 
 '''
 def process_variable_raw_old(input_model, input_experiment_id, input_variable_id, input_variant_label, output_dir):
