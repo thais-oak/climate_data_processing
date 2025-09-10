@@ -10,7 +10,7 @@ import datetime as dt
 
 # spark
 from pyspark.sql import SparkSession
-from pyspark.sql.functions import array, avg, col, concat_ws, expr, collect_list, struct, udf, variance
+from pyspark.sql.functions import array, avg, col, collect_list, concat_ws, expr, lit, struct, udf, variance
 
 # pca e redução de dimensionalidade
 from pyspark.ml.feature import PCA, StandardScaler, VectorAssembler
@@ -251,7 +251,7 @@ def process_variable_delivery(variable_id, input_model, input_experiment_id, inp
     feature_map = {f"f{i}": (row["lat_grid"], row["lon_grid"]) for i, row in enumerate(coords_example)}
 
     # salvar JSON no diretório de saída
-    feature_map_dir = os.path.join(output_dir,
+    feature_map_dir = os.path.join(output_dir.lower(),
                                     f"exp={input_experiment_id}",
                                     f"pca={apply_pca_flag}",
                                     f"lasso={apply_lasso_flag}",
@@ -302,6 +302,8 @@ def process_variable_delivery(variable_id, input_model, input_experiment_id, inp
 
     # 6. salvando em parquet particionado
     #output_path = os.path.join(dir_delivery, input_model, variable_id)
+
+    '''
     output_path = os.path.join(output_dir, f"exp={input_experiment_id}", f"pca={apply_pca_flag}", f"lasso={apply_lasso_flag}")
     
     (
@@ -310,8 +312,19 @@ def process_variable_delivery(variable_id, input_model, input_experiment_id, inp
         .partitionBy("year", "month")
         .parquet(output_path)
     )
+    '''
+    output_path = os.path.join(output_dir)
 
-
+    (
+        df_processed
+        .withColumn("exp", lit(input_experiment_id))
+        .withColumn("pca", lit(str(apply_pca_flag)))
+        .withColumn("lasso", lit(str(apply_lasso_flag)))
+        .write
+        .mode("overwrite")
+        .partitionBy("exp", "pca", "lasso", "year", "month")
+        .parquet(output_path)
+    )
 
     logger_ingestion.info(f"dados salvos em {output_path} particionados por year e month")
 
