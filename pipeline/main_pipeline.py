@@ -1,7 +1,7 @@
 # pipelines
 from pipeline.raw_pipeline import process_variable_raw, process_variable_raw_teste_freqs
 from pipeline.trusted_pipeline import process_variable_trusted, process_variable_trusted_dask_teste, process_variable_trusted_dask_only
-from pipeline.delivery_pipeline import process_variable_delivery
+from pipeline.delivery_pipeline import process_variable_delivery, process_variable_delivery_teste
 
 # metadados variáveis e modelos
 from config.variables_config import map_variaveis_meta
@@ -74,8 +74,10 @@ if __name__ == "__main__":
     #process_variable_trusted(variable_id, dir_modelo_raw, dir_modelo_trusted, transform_funcs)
     #process_variable_trusted_dask(variable_id, dir_modelo_raw, dir_modelo_trusted, transform_funcs)
     #process_variable_trusted_dask_teste(source_id, experiment_id, variable_id, variant_label, dir_modelo_raw, dir_modelo_trusted, transform_funcs, input_table_id)
-    process_variable_trusted_dask_only(source_id, experiment_id, variable_id, variant_label, dir_modelo_raw, dir_modelo_trusted, transform_funcs, input_table_id)
+    
+    #process_variable_trusted_dask_only(source_id, experiment_id, variable_id, variant_label, dir_modelo_raw, dir_modelo_trusted, transform_funcs, input_table_id)
 
     # variable_id, input_model, input_experiment_id, input_dir, output_dir, grid_step=2.0, apply_pca_flag=False, apply_lasso_flag=False, lasso_target_strategy="mean", n_pca_components=3, lasso_regularization=0.1
     # execução pipeline delivery
     #process_variable_delivery(variable_id, source_id, experiment_id, dir_modelo_trusted, dir_modelo_delivery, grid_step=2.0, apply_lasso_flag=True, apply_pca_flag=True, lasso_target_strategy="mean")
+    process_variable_delivery_teste(variable_id, source_id, experiment_id, dir_modelo_trusted, dir_modelo_delivery, grid_step=2.0, apply_lasso_flag=True, apply_pca_flag=True, lasso_target_strategy="mean")

@@ -3,10 +3,12 @@ import json
 import logging
 import os
 import sys
+#from utils.path_utils import detect_frequency
 
 # manipulação de datas e timezone
 import pytz
 import datetime as dt
+import time
 
 # spark
 from pyspark.sql import SparkSession
@@ -15,12 +17,14 @@ from pyspark.sql.functions import array, avg, col, collect_list, concat_ws, expr
 # pca e redução de dimensionalidade
 from pyspark.ml.feature import PCA, StandardScaler, VectorAssembler
 from pyspark.ml.regression import LinearRegression
-from pyspark.ml.linalg import Vectors
+from pyspark.ml.linalg import Vectors, VectorUDT
 from pyspark.ml.stat import Summarizer
 from pyspark.ml.functions import array_to_vector, vector_to_array
 from pyspark.sql.types import ArrayType, DoubleType, StructType, StructField
 
-
+# computação científica
+import numpy as np
+from scipy.stats import entropy
 ####################
 # configurações de timezone
 selected_tz = pytz.timezone("America/Sao_Paulo")
@@ -329,3 +333,292 @@ def process_variable_delivery(variable_id, input_model, input_experiment_id, inp
     logger_ingestion.info(f"dados salvos em {output_path} particionados por year e month")
 
     logger_ingestion.info(f"pipeline concluído | delivery")
+
+####################
+####################
+####################
+
+def array_to_vector(colname):
+    """Converte array<double> em DenseVector (necessário para MLlib)."""
+    return col(colname).cast("array<double>").alias(colname)
+
+def compute_entropy(arr):
+        hist, _ = np.histogram(arr, bins=20, density=True)
+        hist += 1e-12
+        return float(entropy(hist))
+
+def process_variable_delivery_teste(
+    variable_id,
+    input_model,
+    input_experiment_id,
+    input_dir,
+    output_dir,
+    grid_step=2.0,
+    apply_pca_flag=False,
+    apply_lasso_flag=False,
+    lasso_target_strategy="mean",
+    n_pca_components=3,
+    lasso_regularization=0.1,
+    frequency="mon"
+):
+    """
+    pipeline da camada delivery
+    
+    etapas:
+    - leitura dos dados da camada trusted (exp/freq/year)
+    - reamostragem espacial (redução resolução → grid_step)
+    - flatten (tempo x gridpoints) → vetores de features
+    - [opcional] PCA (redução dimensionalidade)
+    - [opcional] LASSO (seleção de features)
+    - cálculo de métricas (variância, entropia, PCA, LASSO)
+    - armazenamento dos datasets em parquet + métricas
+    
+    Args:
+        variable_id (str): variável climática (ex: "tas")
+        input_model (str): nome do modelo climático
+        input_experiment_id (str): experimento (ex: historical)
+        input_dir (str): diretório base da camada trusted
+        output_dir (str): diretório base da camada delivery
+        grid_step (float): resolução espacial em graus
+        apply_pca_flag (bool): aplicar PCA?
+        apply_lasso_flag (bool): aplicar LASSO?
+        lasso_target_strategy (str): estratégia de target do LASSO [mean|max|min]
+        n_pca_components (int): nº de componentes principais (PCA)
+        lasso_regularization (float): parâmetro de regularização do LASSO
+        frequency (str): frequência temporal ("mon" ou "day")
+    """
+    start_time = time.time()
+
+    logger_ingestion.info(f"inicializando pipeline | delivery")
+    logger_ingestion.info(f"config:  var={variable_id} | modelo={input_model} | exp={input_experiment_id} | freq={frequency}")
+    
+    spark = SparkSession.builder.appName("ClimateData").getOrCreate()
+
+    # UDF para converter array<double> → DenseVector
+    array_to_vector_udf = udf(lambda arr: Vectors.dense(arr) if arr is not None else None, VectorUDT())
+
+
+    # leitura parquet trusted
+    trusted_path = os.path.join(
+        input_dir,
+        f"exp={input_experiment_id}",
+        f"freq={frequency}"
+        )
+    
+    df_trusted = spark.read.parquet(trusted_path)
+    if df_trusted.count() == 0:
+        logger_ingestion.warning(f"nenhum dado encontrado em {trusted_path}")
+        return
+
+    # reamostragem espacial
+    df_resampled = (
+        df_trusted
+        .withColumn("lat_grid", (col("lat") / grid_step).cast("int") * grid_step)
+        .withColumn("lon_grid", (col("lon") / grid_step).cast("int") * grid_step)
+        .groupBy("year", "month", "lat_grid", "lon_grid")
+        .agg(avg(variable_id).alias(f"{variable_id}_mean"))
+    )
+    var_value = df_resampled.select(variance(f"{variable_id}_mean").alias("var")).first()["var"]
+
+    logger_transform.info(f"reamostragem concluída | {df_resampled.count()} registros | variância={var_value:.3f}")
+
+    # flatten → vetor de features
+    df_vector = (
+        df_resampled
+        .groupBy("year", "month")
+        .agg(
+            collect_list(f"{variable_id}_mean").alias("grid_list"),
+            collect_list(struct("lat_grid", "lon_grid")).alias("grid_coords")
+        )
+    )
+    #df_vector = df_vector.withColumn("features", array_to_vector("grid_list"))
+
+    #assembler = VectorAssembler(inputCols=["grid_list"], outputCol="features")
+    #df_vector = assembler.transform(df_vector)
+
+    # array<double> → DenseVector
+    df_vector = df_vector.withColumn("features", array_to_vector_udf("grid_list"))
+
+
+    # salvar feature_map
+    coords_example = df_vector.select("grid_coords").first()["grid_coords"]
+    feature_map = {f"f{i}": (row["lat_grid"], row["lon_grid"]) for i, row in enumerate(coords_example)}
+    os.makedirs(output_dir, exist_ok=True)
+    with open(os.path.join(output_dir, "feature_map.json"), "w", encoding="utf-8") as f:
+        json.dump(feature_map, f, indent=2)
+
+    # PCA opcional
+    pca_metrics = {}
+    if apply_pca_flag:
+        logger_transform.info(f"aplicando PCA | k={n_pca_components}")
+        pca = PCA(k=n_pca_components, inputCol="features", outputCol="pca_features")
+        pca_model = pca.fit(df_vector)
+        df_vector = pca_model.transform(df_vector)
+        explained_variance = pca_model.explainedVariance.toArray()
+        pca_metrics["explained_variance"] = explained_variance.tolist()
+        pca_metrics["cumulative_variance"] = np.cumsum(explained_variance).tolist()
+    else:
+        logger_transform.info("PCA não aplicado")
+
+    # LASSO opcional
+    lasso_metrics = {}
+    if apply_lasso_flag:
+        target_col = f"{variable_id}_{lasso_target_strategy}"
+        if lasso_target_strategy == "mean":
+            df_vector = df_vector.withColumn(target_col, expr("aggregate(grid_list, 0D, (acc, x) -> acc + x)/size(grid_list)"))
+        elif lasso_target_strategy == "max":
+            df_vector = df_vector.withColumn(target_col, expr("aggregate(grid_list, -1D/0D, (acc, x) -> IF(x > acc, x, acc))"))
+        elif lasso_target_strategy == "min":
+            df_vector = df_vector.withColumn(target_col, expr("aggregate(grid_list, 1D/0D, (acc, x) -> IF(x < acc, x, acc))"))
+        else:
+            raise ValueError(f"target inválido: {lasso_target_strategy}")
+
+        #df_vector = df_vector.withColumn("features_scaled", array_to_vector("grid_list"))
+        #assembler_lasso = VectorAssembler(inputCols=["grid_list"], outputCol="features_scaled")
+        #df_vector = assembler_lasso.transform(df_vector)
+
+        # array<double> → DenseVector
+        df_vector = df_vector.withColumn("features_scaled", array_to_vector_udf("grid_list"))
+
+        lasso = LinearRegression(
+            featuresCol="features_scaled",
+            labelCol=target_col,
+            elasticNetParam=1.0,
+            regParam=lasso_regularization
+        )
+
+        lasso_model = lasso.fit(df_vector)
+        coeffs = lasso_model.coefficients.toArray()
+        selected_idx = [i for i, c in enumerate(coeffs) if abs(c) > 1e-6]
+        lasso_metrics.update({
+            "regParam": lasso_regularization,
+            "MSE": lasso_model.summary.meanSquaredError,
+            "R2": lasso_model.summary.r2,
+            "n_selected_features": len(selected_idx),
+            "sparsity": len(selected_idx)/len(coeffs),
+            "selected_indices": selected_idx
+        })
+        logger_transform.info(f"LASSO concluído | n_features={len(selected_idx)} | R2={lasso_model.summary.r2:.3f}")
+
+        if "coeffs" in locals():
+            lasso_metrics.update({
+            "coefficients": coeffs.tolist(),  # todos os coeficientes
+            "selected_features": {
+                f"f{i}": {
+                    "coord": feature_map[f"f{i}"],
+                    "weight": float(coeffs[i])
+                }
+                for i in selected_idx
+            }
+            })
+
+    # métricas derivadas: entropia média
+    entropy_values = df_vector.select("grid_list").rdd.map(lambda r: compute_entropy(r[0])).collect()
+    entropy_mean = float(np.mean(entropy_values))
+
+    # cálculo da quantidade de linhas e particções do dataframe
+    n_rows = df_vector.count()
+    n_partitions = df_vector.rdd.getNumPartitions()
+
+    # contagem de lat/lon únicos
+    n_lat = df_resampled.select("lat_grid").distinct().count()
+    n_lon = df_resampled.select("lon_grid").distinct().count()
+    n_gridpoints = n_lat * n_lon
+
+    # estatísticas descritivas
+    stats_row = (
+        df_resampled
+        .selectExpr(
+            f"mean({variable_id}_mean) as mean",
+            f"stddev({variable_id}_mean) as std",
+            f"min({variable_id}_mean) as min",
+            f"max({variable_id}_mean) as max"
+        )
+        .first()
+    )
+
+    end_time = time.time()
+    execution_time_seconds = end_time - start_time
+
+    # construção do dicionário de métricas
+    '''
+    metrics = {
+        "meta": {
+            "model": input_model,
+            "variable": variable_id,
+            "experiment": input_experiment_id,
+            "grid_step": grid_step,
+            "n_samples": df_vector.count(),
+            "n_features": len(coords_example),
+            "frequency": frequency
+        },
+        "pca": pca_metrics,
+        "lasso": lasso_metrics,
+        "derived": {"entropy_mean": entropy_mean}
+    }
+    '''
+
+    metrics = {
+        "meta": {
+            "model": input_model,
+            "variable": variable_id,
+            "experiment": input_experiment_id,
+            "grid_step": grid_step,
+            "frequency": frequency
+        },
+
+        "time": {
+            "n_steps": df_resampled.select("year", "month").distinct().count(),
+            "frequency": frequency
+        },
+        "space": {
+            "n_lat": n_lat,
+            "n_lon": n_lon,
+            "n_gridpoints": n_gridpoints
+        },
+        "parquet": {
+            "n_rows": n_rows,
+            "n_partitions": n_partitions
+        },
+        "stats": {
+            "mean": float(stats_row["mean"]),
+            "std": float(stats_row["std"]),
+            "min": float(stats_row["min"]),
+            "max": float(stats_row["max"])
+        },
+        "n_samples": n_rows,
+        "n_features": len(coords_example),
+        "n_partitions": n_partitions,
+        "entropy_mean": entropy_mean,
+        "execution_time_seconds": execution_time_seconds,
+        "pca": pca_metrics,
+        "lasso": lasso_metrics
+    }
+
+
+    # salvar parquet particionado (exp/freq/year)
+    delivery_path = os.path.join(
+        output_dir,
+        f"exp={input_experiment_id}",
+        f"freq={frequency}"
+    )
+
+    # salvando o dataframe
+    (
+        df_vector
+        .write
+        .mode("overwrite")
+        .partitionBy("year", "month")
+        .parquet(delivery_path)
+    )
+    logger_ingestion.info(f"dados salvos em {delivery_path}")
+
+    
+
+    # salvar metrics.json
+    metrics_path = os.path.join(delivery_path, f"metrics_delivery_{variable_id}_{input_model.lower()}_{input_experiment_id}.json")
+    with open(metrics_path, "w", encoding="utf-8") as f:
+        json.dump(metrics, f, indent=2)
+    logger_ingestion.info(f"métricas salvas em {metrics_path}")
+
+    logger_ingestion.info(f"pipeline concluído | delivery | tempo total de execução da camada delivery: = {execution_time_seconds: .2f}s")

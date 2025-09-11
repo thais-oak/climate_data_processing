@@ -424,7 +424,7 @@ def process_variable_trusted_dask_only(input_model,
     # início da contagem de tempo
     start_time = time.time()
 
-    logger_ingestion.info("inicializando pipeline | trusted (xarray + Dask)")
+    logger_ingestion.info("inicializando pipeline | trusted")
 
     frequency = detect_frequency(input_dir)
     logger_ingestion.info(f"frequência detectada: {frequency}")
@@ -461,11 +461,39 @@ def process_variable_trusted_dask_only(input_model,
     ddf = da.to_dask_dataframe().reset_index()
     ddf = add_time_features_teste_freqs(ddf, frequency=frequency)
 
+    if "time" in ddf.columns:
+        ddf["time"] = ddf["time"].astype("datetime64[ms]")  # converte para milissegundos
+
+
     # define partições de saída
     partition_cols = ["year", "month"]
+
     if frequency == "day":
         partition_cols.append("day")
 
+    # cria diretório base para cada ano, similar à estrutura raw
+    for year in ddf["year"].unique().compute():
+        year_dir = os.path.join(
+            output_dir,
+            f"exp={input_experiment_id}",
+            f"freq={frequency}",
+            f"year={int(year)}"
+        )
+        os.makedirs(year_dir, exist_ok=True)
+
+        # filtra dataframe apenas para o ano atual
+        ddf_year = ddf[ddf["year"] == year]
+
+        # salva Parquet particionado dentro do diretório do ano
+        ddf_year.to_parquet(
+            year_dir,
+            engine="pyarrow",
+            write_index=False,
+            partition_on=[col for col in partition_cols if col != "year"]  # ano já é diretório
+        )
+        #logger_ingestion.info(f"arquivos trusted salvos em {year_dir} | particionado por {partition_cols[1:]}")
+    
+    '''
     # salva em Parquet particionado
     ddf.to_parquet(
         output_dir,
@@ -473,10 +501,13 @@ def process_variable_trusted_dask_only(input_model,
         write_index=False,
         partition_on=partition_cols
     )
+    '''
+
+
     # término da execução
     end_time = time.time()
 
     metrics_path = os.path.join(output_dir, "metrics_trusted.json")
     compute_trusted_metrics(ds, ddf, metrics_path, input_model, input_experiment_id, input_variable_id, frequency, start_time, end_time)
 
-    logger_ingestion.info(f"pipeline concluído | trusted dados | salvos em {output_dir} | particionado por {partition_cols})")
+    logger_ingestion.info(f"pipeline concluído | trusted | salvos em {output_dir} | particionado por {partition_cols})")
