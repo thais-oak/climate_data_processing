@@ -4,10 +4,12 @@ import os
 import sys
 import logging
 from collections import defaultdict
+import json
 
 # manipulação de dados
 import xarray as xr
 import pandas as pd
+import numpy as np
 from pyspark.sql import SparkSession
 import dask.array as da
 import dask.dataframe as dd
@@ -15,6 +17,7 @@ import dask.dataframe as dd
 # manipulação de datas e timezone
 import pytz
 import datetime as dt
+import time
 
 # configurações de modelos e variáveis
 from config.variables_config import map_variaveis_meta
@@ -229,114 +232,7 @@ def detect_frequency(input_dir):
     else:
         # fallback simples: diário se o arquivo contiver 'day', mensal se 'Amon'
         return "mon"
-
-####################
-#def process_variable_trusted_dask(variable_id, input_dir, output_dir, map_transform_funcs):
-def process_variable_trusted_dask(input_model,
-                                input_experiment_id,
-                                input_variable_id,
-                                input_variant_label,
-                                input_dir, output_dir, map_transform_funcs, table_id="Amon"):
-    """
     
-    Pipeline camada trusted.
-
-    Args:
-        variable_id (str): variável climática.
-        input_dir (str): diretório RAW.
-        output_dir (str): diretório TRUSTED.
-        map_transform_funcs (dict): dicionário de transformações.
-        frequency (str): "mon" ou "day".
-        chunk_time (int): tamanho do chunk temporal (opcional, apenas com Dask/xarray).
-    
-    """
-
-    logger_ingestion.info(f"inicializando pipeline | trusted")
-
-    frequency = detect_frequency(input_dir)
-    logger_ingestion.info(f"frequência detectada: {frequency}")
-    logger_ingestion.info(f"config: model={input_model}, exp={input_experiment_id}, var={input_variable_id}, table={table_id}, freq={frequency}")
-
-    # spark session
-    spark = SparkSession.builder.appName("ClimateData").getOrCreate()
-
-    # selecionando transformações
-    variavel_escolhida = map_variaveis_meta[input_variable_id]
-    logger_ingestion.info(f"transformações aplicadas: {variavel_escolhida['transformations']}")
-
-    # listando arquivos NetCDF
-    nc_files = glob.glob(os.path.join(input_dir, "**", "*.nc"), recursive=True)
-    if not nc_files:
-        logger_read.warning("nenhum arquivo encontrado na camada raw")
-        return
-
-    logger_ingestion.info(f"{len(nc_files)} arquivos encontrados")
-
-    # lista de dataframes dask
-    list_dask = []
-
-    # agrupando arquivos por ano para processamento incremental
-    files_by_year = {}
-    for f in nc_files:
-        basename = os.path.basename(f)
-        # assume padrão ..._YYYYMM-YYYYMM.nc
-        year_str = basename.split("_")[-1][:4]
-        files_by_year.setdefault(year_str, []).append(f)
-
-    for year, files in sorted(files_by_year.items()):
-        # lista de dataframes dask
-        list_dask = []
-        logger_ingestion.info(f"processando ano {year} com {len(files)} arquivos")
-
-
-        for nc_file in nc_files:
-            logger_ingestion.info(f"lendo arquivo: {nc_file}")
-            #ds = xr.open_dataset(nc_file)[variable_id]
-            try:
-                ds = xr.open_dataset(nc_file, engine="h5netcdf", chunks={})[input_variable_id]
-
-                # aplicando transformações
-                for transform in variavel_escolhida["transformations"]:
-                    logger_ingestion.info(f"aplicando {transform}")
-                    ds = map_transform_funcs[transform](ds)
-
-                # convertendo para dask dataframe via xarray
-                df = ds.to_dataframe().reset_index()
-                df = add_time_features_teste_freqs(df, frequency=frequency)
-
-                # particionando em chunks dask
-                ddf = dd.from_pandas(df, npartitions=5)
-                list_dask.append(ddf)
-                ds.close()
-
-            except Exception as e:
-                logger_ingestion.error(f"erro ao abrir {nc_file}: {e}")
-                continue
-
-        if not list_dask:
-            continue
-
-        # concatenando todos os dask dataframes
-        ddf_all = dd.concat(list_dask)
-        df_spark = spark.createDataFrame(ddf_all.compute())
-
-        # convertendo para spark dataframe
-        logger_ingestion.info(f"dask dataframe do ano {year} convertido para spark dataframe")
-
-        # particionamento dinâmico baseado na frequência
-        partition_cols = ["year", "month"]
-        if frequency == "day":
-            partition_cols.append("day")
-
-        # reparticiona e salva
-        df_spark = df_spark.repartition(10, *partition_cols)
-        df_spark.write.mode("append").partitionBy(*partition_cols).parquet(output_dir)
-        logger_ingestion.info(f"ano {year} salvo em {output_dir} particionado por {partition_cols}")
-
-    logger_ingestion.info(f"pipeline concluído | trusted")
-    #logger_ingestion.info(f"dados salvos em {output_dir} particionado por {partition_cols}")
-
-
 ######################################
 def process_variable_trusted_dask_teste(input_model,
                                 input_experiment_id,
@@ -435,6 +331,74 @@ def process_variable_trusted_dask_teste(input_model,
     logger_ingestion.info(f"pipeline concluído | trusted")
 
 ######################################
+def compute_trusted_metrics(ds, ddf, output_metrics_path, input_model, input_experiment_id, input_variable_id, frequency, execution_start=None, execution_end=None):
+    """
+    cálculo e armazenamento de métricas de qualidade e estrutura dos dados da camada trusted
+    """
+    metrics = {}
+
+    # período
+    time_index = ds["time"].values
+    metrics["time"] = {
+        "start": str(time_index[0]),
+        "end": str(time_index[-1]),
+        "n_steps": len(time_index),
+        "frequency": frequency
+    }
+
+    # estrutura espacial
+    metrics["space"] = {
+        "n_lat": ds.sizes.get("lat", None),
+        "n_lon": ds.sizes.get("lon", None),
+        "n_gridpoints": ds.sizes.get("lat", 0) * ds.sizes.get("lon", 0)
+    }
+
+    # estatísticas da variável principal usando Dask
+    array_dask = ds[input_variable_id].data  # Dask array
+    array_flat = array_dask.ravel()  # transforma em 1D
+    array_flat = array_flat[~da.isnan(array_flat)]  # remove NaNs
+
+    # percentis e estatísticas
+    metrics["stats"] = {
+        "mean": float(array_flat.mean().compute()),
+        "std": float(array_flat.std().compute()),
+        "min": float(array_flat.min().compute()),
+        "max": float(array_flat.max().compute()),
+        "percentiles": {
+            "p1": float(da.percentile(array_flat, 1).compute()),
+            "p50": float(da.percentile(array_flat, 50).compute()),
+            "p99": float(da.percentile(array_flat, 99).compute())
+        }
+    }
+
+    # estrutura do parquet
+    metrics["parquet"] = {
+        "n_rows": int(ddf.shape[0].compute()),
+        "n_partitions": ddf.npartitions
+    }
+
+    # metadados gerais
+    metrics["meta"] = {
+        "model": input_model,
+        "experiment": input_experiment_id,
+        "variable": input_variable_id
+    }
+
+    # cálculo do tempo de execução da camada
+    if execution_start is not None and execution_end is not None:
+        metrics["execution_time_seconds"] = execution_end - execution_start
+
+    # salvando em JSON
+    os.makedirs(os.path.dirname(output_metrics_path), exist_ok=True)
+    with open(output_metrics_path, "w") as f:
+        json.dump(metrics, f, indent=2)
+    
+    if "execution_time_seconds" in metrics:
+        logger_ingestion.info(f"tempo total da camada trusted: {metrics['execution_time_seconds']:.2f} segundos")
+    
+    logger_ingestion.info(f"métricas salvas em {output_metrics_path}")
+
+######################################
 def process_variable_trusted_dask_only(input_model,
                                        input_experiment_id,
                                        input_variable_id,
@@ -457,6 +421,9 @@ def process_variable_trusted_dask_only(input_model,
         map_transform_funcs (dict): dicionário de transformações.
         table_id (str): tabela CMIP (ex.: Amon).
     """
+    # início da contagem de tempo
+    start_time = time.time()
+
     logger_ingestion.info("inicializando pipeline | trusted (xarray + Dask)")
 
     frequency = detect_frequency(input_dir)
@@ -506,5 +473,10 @@ def process_variable_trusted_dask_only(input_model,
         write_index=False,
         partition_on=partition_cols
     )
+    # término da execução
+    end_time = time.time()
 
-    logger_ingestion.info(f"pipeline concluído | trusted (dados salvos em {output_dir}, particionado por {partition_cols})")
+    metrics_path = os.path.join(output_dir, "metrics_trusted.json")
+    compute_trusted_metrics(ds, ddf, metrics_path, input_model, input_experiment_id, input_variable_id, frequency, start_time, end_time)
+
+    logger_ingestion.info(f"pipeline concluído | trusted dados | salvos em {output_dir} | particionado por {partition_cols})")
