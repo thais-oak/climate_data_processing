@@ -11,10 +11,14 @@ import requests
 from copy import copy
 import pytz
 import datetime as dt
+import time
+
+import dask.array as da
 
 # configurações de modelos e variáveis
 from config.variables_config import map_variaveis_meta
 from config.models_config import map_modelos_dir
+from transformations.temporal import add_time_features_teste_freqs
 
 selected_tz = pytz.timezone("America/Sao_Paulo")
 ####################
@@ -57,6 +61,72 @@ def configurar_logger(nome_logger):
 logger_read = configurar_logger("leitura_dados")
 logger_ingestion = configurar_logger("ingestao_dados")
 ####################
+def compute_raw_metrics(list_nc_files, input_model, input_experiment_id, input_variable_id, frequency, output_metrics_path, start_time, end_time):
+    """
+    Calcula métricas da camada RAW a partir da lista de arquivos NetCDF baixados.
+    Compatível com a estrutura de métricas da camada trusted.
+    """
+    if not list_nc_files:
+        logger_ingestion.warning("nenhum arquivo disponível para cálculo de métricas na camada raw")
+        return
+
+    # abre todos os arquivos em lazy loading
+    ds = xr.open_mfdataset(list_nc_files, engine="h5netcdf", combine="by_coords", parallel=True, chunks={"time": 50})
+    array_dask = ds[input_variable_id]
+
+    # converte para dask dataframe e adiciona features de tempo
+    ddf = array_dask.to_dask_dataframe().reset_index()
+    ddf = add_time_features_teste_freqs(ddf, frequency=frequency)
+
+    # calcula estatísticas usando Dask
+    vals = array_dask.flatten()
+    vals = vals[~da.isnan(vals)]
+
+    metrics = {
+        "time": {
+            "start": str(ds["time"].values[0]),
+            "end": str(ds["time"].values[-1]),
+            "n_steps": len(ds["time"]),
+            "frequency": frequency
+        },
+        "space": {
+            "n_lat": ds.sizes.get("lat", None),
+            "n_lon": ds.sizes.get("lon", None),
+            "n_gridpoints": ds.sizes.get("lat", 0) * ds.sizes.get("lon", 0)
+        },
+        "stats": {
+            "mean": float(da.mean(vals).compute()),
+            "std": float(da.std(vals).compute()),
+            "min": float(da.min(vals).compute()),
+            "max": float(da.max(vals).compute()),
+            "percentiles": {
+                "p1": float(da.percentile(vals, 1).compute()),
+                "p50": float(da.percentile(vals, 50).compute()),
+                "p99": float(da.percentile(vals, 99).compute())
+            }
+        },
+        "parquet": {
+            "n_rows": int(ddf.shape[0].compute()),
+            "n_partitions": ddf.npartitions
+        },
+        "meta": {
+            "model": input_model,
+            "experiment": input_experiment_id,
+            "variable": input_variable_id
+        },
+        "execution_time_seconds": end_time - start_time
+    }
+
+    # salvar métricas
+    os.makedirs(os.path.dirname(output_metrics_path), exist_ok=True)
+    with open(output_metrics_path, "w") as f:
+        json.dump(metrics, f, indent=2)
+
+    logger_ingestion.info(f"métricas da camada raw salvas em {output_metrics_path}")
+
+
+
+
 def process_variable_raw(input_model, input_experiment_id, input_variable_id, input_variant_label, output_dir, year_min=None, year_max=None, year_list=None):
     """
     Faz ingestão da variável climática na camada raw com filtros de tempo.
@@ -67,6 +137,8 @@ def process_variable_raw(input_model, input_experiment_id, input_variable_id, in
     """
 
     ####################
+    
+
     logger_read.info(f"inicializando pipeline | raw")
     # conexão com ESGF e busca dos datasets
     conn = SearchConnection("https://esgf-data.dkrz.de/esg-search", distrib=False)
@@ -171,8 +243,9 @@ def process_variable_raw(input_model, input_experiment_id, input_variable_id, in
 
         except Exception as e:
             logger_read.error(f"erro ao baixar {file_name}: {e}")
-
-    ####################
+    
+    metrics_path = os.path.join(output_dir, "metrics_raw.json")
+    
     logger_read.info(f"\n-----\nquantidade final de arquivos salvos: {len(list_nc_files)}")
     logger_read.info(f"décadas disponíveis no dataset: {sorted(decadas.keys())}")
     logger_read.info(f"pipeline concluído | raw")
@@ -210,6 +283,9 @@ def process_variable_raw_teste_freqs(input_model,
     """
 
     ####################
+    # início da contagem de tempo
+    start_time = time.time()
+
     logger_read.info(f"inicializando pipeline | raw")
     logger_read.info(f"config: model={input_model}, exp={input_experiment_id}, var={input_variable_id}, table={table_id}, freq={frequency}")
 
@@ -321,6 +397,10 @@ def process_variable_raw_teste_freqs(input_model,
             json.dump(manifest, f, indent=2)
         logger_ingestion.info(f"manifesto salvo em {manifest_path}")
 
+    end_time = time.time()
+    metrics_path = os.path.join(output_dir, f"metrics_raw_{input_variable_id}_{input_model}_{input_experiment_id}_{frequency}.json")
+    compute_raw_metrics(list_nc_files, input_model, input_experiment_id, input_variable_id, frequency, metrics_path, start_time, end_time)
+    ####################
     logger_read.info(f"pipeline concluído | raw | arquivos salvos={len(list_nc_files)}")
 
 '''
