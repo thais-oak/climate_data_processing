@@ -19,13 +19,18 @@ if __name__ == "__main__":
 
     dir_raiz = r"/home/thais/climate-ingestion/climate_data_processing/datasets"
 
+    # diretório para CI
+    dir_outputs = r"/home/thais/climate-ingestion/climate_data_processing/outputs"
+
     dir_raw = os.path.join(dir_raiz, "raw")
     #os.makedirs(dir_raw, exist_ok=True)
 
     dir_trusted = os.path.join(dir_raiz, "trusted")
     #os.makedirs(dir_trusted, exist_ok=True)
 
-    dir_delivery = os.path.join(dir_raiz, "delivery")
+    #dir_delivery = os.path.join(dir_raiz, "delivery")
+    # teste para CI
+    dir_delivery = os.path.join(dir_outputs, "delivery")
 
     # selecionando a variável
     variavel_escolhida = map_variaveis_meta["tas"]
@@ -56,7 +61,7 @@ if __name__ == "__main__":
     input_frequency = "mon"
     variant_label = variavel_escolhida["variant_label"]#"r110i1p1f1"
 
-
+    print(dir_modelo_delivery)
     # parâmetros para a execução da pipeline trusted
     # mapeando nomes das funções para objetos Python
     transform_funcs = {
@@ -65,6 +70,26 @@ if __name__ == "__main__":
         "kelvin_to_celsius": kelvin_to_celsius,
         "remove_outliers": remove_outliers
     }
+
+    ##########
+    import json
+    from pathlib import Path
+
+    def build_output_paths(model, experiment, variable, frequency):
+        base_dir = Path("outputs") / "delivery" / model / experiment / variable / frequency
+        parquet_dir = base_dir / "parquet"
+        metrics_dir = base_dir / "metrics"
+        
+        parquet_dir.mkdir(parents=True, exist_ok=True)
+        metrics_dir.mkdir(parents=True, exist_ok=True)
+        
+        return {
+            "parquet": parquet_dir,
+            "metrics": metrics_dir
+        }
+    
+    paths = build_output_paths(dir_modelo, experiment_id, variable_id, input_frequency)
+    ##########
 
     # execução pipeline raw
     #process_variable_raw(source_id, experiment_id, variable_id, variant_label, dir_modelo_raw, year_min=None, year_max=None, year_list=[1910, 1911, 1912, 1913, 1914, 1915, 1916, 1917, 1918, 1919])

@@ -1,0 +1,34 @@
+- name: Run trusted pipeline
+  run: |
+    mkdir -p datasets/trusted
+    python - <<EOF
+from pipeline.trusted_pipeline import process_variable_trusted_dask_only
+from config.variables_config import map_transform_funcs
+
+process_variable_trusted_dask_only(
+    input_model="EC-Earth3",
+    input_experiment_id="historical",
+    input_variable_id="tas",
+    input_variant_label="r1i1p1f1",
+    input_dir="datasets/raw",
+    output_dir="datasets/trusted",
+    map_transform_funcs=map_transform_funcs,
+    table_id="Amon"
+)
+EOF
+
+- name: Validate output
+  run: |
+    python - <<EOF
+import glob
+import pyarrow.parquet as pq
+
+parquet_files = glob.glob("datasets/trusted/**/*.parquet", recursive=True)
+assert parquet_files, "Nenhum arquivo Parquet foi gerado"
+
+for pf in parquet_files:
+    table = pq.read_table(pf)
+    assert "tas" in table.column_names, "Coluna 'tas' não encontrada"
+    vals = table["tas"].to_pylist()
+    assert all(isinstance(v, (int, float)) for v in vals), "Valores não numéricos detectados"
+EOF
