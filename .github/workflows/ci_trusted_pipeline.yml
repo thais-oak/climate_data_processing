@@ -11,51 +11,51 @@ jobs:
     runs-on: ubuntu-latest
 
     steps:
-    - name: Checkout repository
-      uses: actions/checkout@v3
+      - name: Checkout repository
+        uses: actions/checkout@v3
 
-    - name: Set up Python 3.12
-      uses: actions/setup-python@v4
-      with:
-        python-version: 3.12
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v4
+        with:
+          python-version: 3.12
 
-    - name: Install dependencies
-      run: |
-        python -m pip install --upgrade pip
-        pip install -r requirements.txt
-        pip install xarray dask pyarrow numpy
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install xarray dask pyarrow numpy
 
-    - name: Run trusted pipeline
-      run: |
-        mkdir -p datasets/trusted
-        python - <<EOF
-from pipeline.trusted_pipeline import process_variable_trusted_dask_only
-from config.variables_config import map_transform_funcs
+      - name: Run trusted pipeline
+        run: |
+          export PYTHONPATH="${PYTHONPATH}:."
+          python - <<EOF
+          from pipeline.trusted_pipeline import process_variable_trusted_dask_only
+          from config.variables_config import map_variaveis_meta
 
-process_variable_trusted_dask_only(
-    input_model="EC-Earth3",
-    input_experiment_id="historical",
-    input_variable_id="tas",
-    input_variant_label="r1i1p1f1",
-    input_dir="datasets/raw",
-    output_dir="datasets/trusted",
-    map_transform_funcs=map_transform_funcs,
-    table_id="Amon"
-)
-EOF
+          process_variable_trusted_dask_only(
+              input_model="EC-Earth3",
+              input_experiment_id="historical",
+              input_variable_id="tas",
+              input_variant_label="r1i1p1f1",
+              input_dir="datasets/raw",
+              output_dir="datasets/trusted",
+              map_transform_funcs=map_variaveis_meta,
+              table_id="Amon"
+          )
+          EOF
 
-    - name: Validate output
-      run: |
-        python - <<EOF
-import glob
-import pyarrow.parquet as pq
+      - name: Validate output
+        run: |
+          python - <<EOF
+          import glob
+          import pyarrow.parquet as pq
 
-parquet_files = glob.glob("datasets/trusted/**/*.parquet", recursive=True)
-assert parquet_files, "Nenhum arquivo Parquet foi gerado"
+          parquet_files = glob.glob("datasets/trusted/**/*.parquet", recursive=True)
+          assert parquet_files, "Nenhum arquivo Parquet foi gerado"
 
-for pf in parquet_files:
-    table = pq.read_table(pf)
-    assert "tas" in table.column_names, "Coluna 'tas' não encontrada"
-    vals = table["tas"].to_pylist()
-    assert all(isinstance(v, (int, float)) for v in vals), "Valores não numéricos detectados"
-EOF
+          for pf in parquet_files:
+              table = pq.read_table(pf)
+              assert "tas" in table.column_names, "Coluna 'tas' não encontrada"
+              vals = table["tas"].to_pylist()
+              assert all(isinstance(v, (int, float)) for v in vals), "Valores não numéricos detectados"
+          EOF
