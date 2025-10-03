@@ -10,6 +10,13 @@ on:
 jobs:
   run-raw:
     runs-on: ubuntu-latest
+
+    env:
+      MODEL: ec_earth3
+      VAR: tas
+      EXP: historical
+      FREQ: mon
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -30,36 +37,38 @@ jobs:
           mkdir -p datasets/raw
           mkdir -p datasets/trusted
           mkdir -p datasets/delivery
-          echo "Estrutura de datasets:"
+          echo "Estrutura inicial de datasets:"
           find datasets -maxdepth 6 -type d
 
       - name: Run raw pipeline
         run: |
           export PYTHONPATH="${PYTHONPATH}:."
-          python main_pipeline.py --stage raw
+          python pipeline/main_pipeline.py --stage raw
 
       - name: Validate output
         run: |
-          OUTPUT_DIR="datasets/raw/ec_earth3/tas/exp=historical/freq=mon"
-          echo "validando saída em $OUTPUT_DIR"
+          OUTPUT_DIR="datasets/raw/${MODEL}/${VAR}/exp=${EXP}/freq=${FREQ}"
+          echo "Validando saída em $OUTPUT_DIR"
 
           if [ ! -d "$OUTPUT_DIR" ]; then
             echo "diretório $OUTPUT_DIR não encontrado"
             exit 1
           fi
 
+          echo "diretório de saída encontrado"
+
           # busca recursiva por arquivos NetCDF
           if ! find "$OUTPUT_DIR" -type f -name "*.nc" | grep -q .; then
             echo "nenhum arquivo NetCDF encontrado em $OUTPUT_DIR (nem em subpastas)"
             exit 1
           fi
+          echo "arquivo NetCDF encontrado"
 
           # checa se pelo menos um arquivo de métricas foi gerado
-          if ! find "$OUTPUT_DIR" -type f -name "metrics_raw_*.json" | grep -q .; then
-            echo "nenhum metrics_raw JSON encontrado"
+          if ! find "$OUTPUT_DIR" -type f -name "manifest*.json" | grep -q .; then
+            echo "nenhum arquivo de métricas JSON encontrado"
             exit 1
-          else
-            echo "arquivo metrics_raw JSON localizado"
           fi
+          echo "arquivo de métricas JSON localizado"
 
           echo "estrutura de saída validada com sucesso"

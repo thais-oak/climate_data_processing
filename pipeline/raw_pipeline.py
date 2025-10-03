@@ -79,7 +79,8 @@ def compute_raw_metrics(list_nc_files, input_model, input_experiment_id, input_v
     ddf = add_time_features_teste_freqs(ddf, frequency=frequency)
 
     # calcula estatísticas usando Dask
-    vals = array_dask.flatten()
+    #vals = array_dask.flatten()
+    vals = array_dask.data.ravel()
     vals = vals[~da.isnan(vals)]
 
     metrics = {
