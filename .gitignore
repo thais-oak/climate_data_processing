@@ -207,11 +207,11 @@ marimo/_lsp/
 __marimo__/
 
 # dados brutos
-/datasets/*.nc
-/datasets/*.parquet
-/datasets/ec_earth3/tas/*
-/datasets/ec_earth3/*
-datasets/*
+#/datasets/*.nc
+#/datasets/*.parquet
+#/datasets/ec_earth3/tas/*
+#/datasets/ec_earth3/*
+#datasets/*
 
 /glue_libs/*
 libs.zip
