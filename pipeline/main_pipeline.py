@@ -131,6 +131,10 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Climate Data Processing - RAW, TRUSTED, DELIVERY")
     parser.add_argument("--stage", choices=["raw", "trusted", "delivery", "all"], default="all",
                         help="Qual camada executar")
+    parser.add_argument("--model", type=str, default="EC-Earth3", help="Modelo climático")
+    parser.add_argument("--variable", type=str, default="tas", help="Variável climática")
+    parser.add_argument("--exp", type=str, default=None, help="Experimento (ex: historical)")
+    parser.add_argument("--freq", type=str, default="mon", help="Frequência temporal")
     args = parser.parse_args()
 
     # raiz dos dados
@@ -140,11 +144,24 @@ if __name__ == "__main__":
     # diretórios das camadas
     dir_raw = os.path.join(dir_raiz, "raw")
     dir_trusted = os.path.join(dir_raiz, "trusted")
-    dir_delivery = os.path.join(dir_outputs, "delivery")  # CI: joga saída em outputs/delivery
+    dir_delivery = os.path.join(dir_raiz, "delivery")  # CI: joga saída em outputs/delivery
 
     # variável e modelo escolhidos
-    variavel_escolhida = map_variaveis_meta["tas"]
-    modelo_escolhido = map_modelos_dir["EC-Earth3"]
+    if args.model not in map_modelos_dir:
+        raise ValueError(f"modelo inválido: {args.model}")
+    if args.variable not in map_variaveis_meta:
+        raise ValueError(f"variável inválida: {args.variable}")
+
+    # variável e modelo escolhidos
+    #variavel_escolhida = map_variaveis_meta["tas"]
+    #modelo_escolhido = map_modelos_dir["EC-Earth3"]
+
+    variavel_escolhida = map_variaveis_meta[args.variable]
+    modelo_escolhido = map_modelos_dir[args.model]
+
+    # recebe experiment_id do args, ou atribui à partir do map_variaveis_meta
+    experiment_id = args.exp or variavel_escolhida["experiment_id"]
+    frequency = args.freq
 
     dir_modelo = modelo_escolhido["nome_dir"]
     dir_modelo_raw = os.path.join(dir_raw, dir_modelo, variavel_escolhida["variable_id"])
@@ -168,18 +185,21 @@ if __name__ == "__main__":
         "raw": partial(
             process_variable_raw_teste_freqs,
             modelo_escolhido["nome"],                     # source_id
-            variavel_escolhida["experiment_id"],          # experiment
+            #variavel_escolhida["experiment_id"],          # experiment
+            experiment_id,                                # experiment
             variavel_escolhida["variable_id"],            # variable
             variavel_escolhida["variant_label"],          # variant_label
             dir_modelo_raw,                               # output_dir
             "Amon",                                       # table_id
-            "mon",                                        # frequency
-            year_list=[1910, 1911]                        # restrição CI/testes
+            #"mon",                                        # frequency
+            frequency,                                    # frequency
+            year_list=[1910, 1911]                        # filtro de tempo
         ),
         "trusted": partial(
             process_variable_trusted_dask_only,
             input_model=dir_modelo,
-            input_experiment_id=variavel_escolhida["experiment_id"],
+            #input_experiment_id=variavel_escolhida["experiment_id"],
+            input_experiment_id=experiment_id,
             input_variable_id=variavel_escolhida["variable_id"],
             input_variant_label=variavel_escolhida["variant_label"],
             input_dir=dir_modelo_raw,
