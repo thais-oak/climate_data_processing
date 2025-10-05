@@ -1,10 +1,10 @@
 name: CI Trusted Pipeline
 
 on:
-  push:
-    branches: [wsl_ci]
-  pull_request:
-    branches: [wsl_ci]
+#  push:
+#    branches: [wsl_ci]
+#  pull_request:
+#    branches: [wsl_ci]
   workflow_dispatch:
 
 jobs:
@@ -40,7 +40,7 @@ jobs:
 
           echo "Estrutura inicial de datasets:"
           find datasets -maxdepth 6 -type d
-          
+
       - name: Populate raw dataset for testing
         run: |
           # Copia arquivos de teste (pequenos) já versionados no repo

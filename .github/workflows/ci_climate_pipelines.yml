@@ -1,10 +1,10 @@
 name: CI Climate Data Pipelines
 
 on:
-  push:
-    branches: [wsl_ci]
-  pull_request:
-    branches: [wsl_ci]
+#  push:
+#    branches: [wsl_ci]
+#  pull_request:
+#    branches: [wsl_ci]
   workflow_dispatch:
 
 env:
