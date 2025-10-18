@@ -234,12 +234,14 @@ def process_variable_raw_teste_freqs(input_model,
 
         logger_read.info(f"baixando arquivo: {file_name}")
         try:
-            response = requests.get(url)
+            response = requests.get(url, stream=True)
             with open(file_path, "wb") as f:
                 f.write(response.content)
+
             if os.path.exists(file_path):
                 list_nc_files.append(file_path)
                 logger_ingestion.info(f"arquivo salvo em {file_path}")
+
         except Exception as e:
             logger_ingestion.error(f"erro ao baixar {file_name}: {e}")
 
@@ -274,6 +276,9 @@ def process_variable_raw_teste_freqs(input_model,
     compute_raw_metrics(list_nc_files, input_model, input_experiment_id, input_variable_id, frequency, metrics_path, start_time, end_time)
     ####################
     logger_read.info(f"pipeline concluído | raw | arquivos salvos={len(list_nc_files)}")
+
+    #return {"manifest_path": manifest_path, "metrics_path": metrics_path, "n_files": len(list_nc_files)}
+
 
 '''
 def process_variable_raw_old(input_model, input_experiment_id, input_variable_id, input_variant_label, output_dir):

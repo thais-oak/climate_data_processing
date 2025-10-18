@@ -110,6 +110,7 @@ if __name__ == "__main__":
 import os
 import argparse
 from functools import partial
+from dotenv import load_dotenv
 
 # pipelines
 from pipeline.raw_pipeline import process_variable_raw_teste_freqs
@@ -137,14 +138,21 @@ if __name__ == "__main__":
     parser.add_argument("--freq", type=str, default="mon", help="Frequência temporal")
     args = parser.parse_args()
 
+    # carregando o arquivo .env com variáveis de ambiente
+    load_dotenv()
+
     # raiz dos dados
     dir_raiz = r"/home/thais/climate-ingestion/climate_data_processing/datasets"
     dir_outputs = r"/home/thais/climate-ingestion/climate_data_processing/outputs"
 
     # diretórios das camadas
-    dir_raw = os.path.join(dir_raiz, "raw")
-    dir_trusted = os.path.join(dir_raiz, "trusted")
-    dir_delivery = os.path.join(dir_raiz, "delivery")  # CI: joga saída em outputs/delivery
+    #dir_raw = os.path.join(dir_raiz, "raw")
+    #dir_trusted = os.path.join(dir_raiz, "trusted")
+    #dir_delivery = os.path.join(dir_raiz, "delivery")  # CI: joga saída em outputs/delivery
+
+    dir_raw = os.getenv("RAW_DATA_PATH", "./data/raw")
+    dir_trusted = os.getenv("TRUSTED_DATA_PATH", "./data/trusted")
+    dir_delivery = os.getenv("DELIVERY_DATA_PATH", "./data/delivery")
 
     # variável e modelo escolhidos
     if args.model not in map_modelos_dir:
