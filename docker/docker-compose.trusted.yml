@@ -1,0 +1,20 @@
+version: "3.12"
+services:
+  trusted-pipeline:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: trusted_pipeline
+    env_file:
+      - ../.env
+    volumes:
+      - ../datasets:/data
+      - ../outputs:/outputs
+    depends_on:
+      - raw-pipeline
+    command: >
+      python main_pipeline.py
+      --model ${MODEL}
+      --variable ${VARIABLE}
+      --exp ${EXPERIMENT}
+      --freq ${FREQ}

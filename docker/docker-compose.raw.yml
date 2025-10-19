@@ -1,0 +1,19 @@
+version: "3.12"
+services:
+  raw-pipeline:
+    build:
+      context: ..
+      dockerfile: Dockerfile
+    container_name: raw_pipeline
+    env_file:
+      - ../.env
+    volumes:
+      - ../datasets:/data
+      - ../outputs:/outputs
+    command: >
+      python main_pipeline.py
+      --stage raw
+      --model ${MODEL}
+      --variable ${VARIABLE}
+      --exp ${EXPERIMENT}
+      --freq ${FREQ}
