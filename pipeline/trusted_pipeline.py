@@ -158,7 +158,10 @@ def process_variable_trusted_dask_only(input_model,
                                        input_dir,
                                        output_dir,
                                        map_transform_funcs,
-                                       table_id="Amon"):
+                                       table_id="Amon",
+                                       year_min=None,
+                                       year_max=None,
+                                       year_list=None):
     """
     Pipeline camada trusted apenas com xarray + Dask.
     Lê arquivos NetCDF da raw, aplica transformações e salva em Parquet particionado.
@@ -173,6 +176,25 @@ def process_variable_trusted_dask_only(input_model,
         map_transform_funcs (dict): dicionário de transformações.
         table_id (str): tabela CMIP (ex.: Amon).
     """
+    # função auxiliar para normalizar a informação de período de tempo
+    def _format_period(year_min=None, year_max=None, year_list=None):
+        """
+        retorna uma string representando o período temporal usado
+        """
+        
+        if year_list:
+            if len(year_list) == 1:
+                return f"{year_list[0]}"
+            return f"{min(year_list)}-{max(year_list)}"
+        elif year_min and year_max:
+            return f"{year_min}-{year_max}"
+        elif year_min:
+            return f"{year_min}-end"
+        elif year_max:
+            return f"start-{year_max}"
+        else:
+            return "all"
+    ####################
     # início da contagem de tempo
     start_time = time.time()
 
@@ -259,7 +281,17 @@ def process_variable_trusted_dask_only(input_model,
     # término da execução
     end_time = time.time()
 
-    metrics_path = os.path.join(output_dir, "metrics_trusted.json")
+    # tratando o  período de dados para o nome do manifesto
+    period_label = _format_period(year_min, year_max, year_list)
+
+    # métricas
+    metrics_filename = f"metrics_trusted_{input_variable_id}_{input_model}_{input_experiment_id}_{frequency}_{period_label}.json"
+
+    metrics_path = os.path.join(output_dir,
+                                f"exp={input_experiment_id}",
+                                f"freq={frequency}",
+                                metrics_filename
+                            )
     compute_trusted_metrics(ds, ddf, metrics_path, input_model, input_experiment_id, input_variable_id, frequency, start_time, end_time)
 
     logger_ingestion.info(f"pipeline concluído | trusted | salvos em {output_dir} | particionado por {partition_cols})")

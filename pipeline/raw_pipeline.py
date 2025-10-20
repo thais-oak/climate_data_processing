@@ -3,6 +3,7 @@ import os
 import sys
 import glob
 import json
+import hashlib
 
 from collections import Counter, defaultdict
 import logging
@@ -63,15 +64,19 @@ logger_ingestion = configurar_logger("ingestao_dados")
 ####################
 def compute_raw_metrics(list_nc_files, input_model, input_experiment_id, input_variable_id, frequency, output_metrics_path, start_time, end_time):
     """
-    Calcula métricas da camada RAW a partir da lista de arquivos NetCDF baixados.
-    Compatível com a estrutura de métricas da camada trusted.
+    calcula métricas da camada raw a partir da lista de arquivos NetCDF baixados
+
     """
     if not list_nc_files:
         logger_ingestion.warning("nenhum arquivo disponível para cálculo de métricas na camada raw")
         return
 
+    # extraindo os caminhos dos arquivos
+    file_paths = [f["path"] for f in list_nc_files if isinstance(f, dict) and "path" in f]
+
     # abre todos os arquivos em lazy loading
-    ds = xr.open_mfdataset(list_nc_files, engine="h5netcdf", combine="by_coords", parallel=True, chunks={"time": 50})
+    #ds = xr.open_mfdataset(list_nc_files, engine="h5netcdf", combine="by_coords", parallel=True, chunks={"time": 50})
+    ds = xr.open_mfdataset(file_paths, engine="h5netcdf", combine="by_coords", parallel=True, chunks={"time": 50})
     array_dask = ds[input_variable_id]
 
     # converte para dask dataframe e adiciona features de tempo
@@ -124,7 +129,20 @@ def compute_raw_metrics(list_nc_files, input_model, input_experiment_id, input_v
         json.dump(metrics, f, indent=2)
 
     logger_ingestion.info(f"métricas da camada raw salvas em {output_metrics_path}")
+####################
+def compute_checksum(file_path, algorithm="sha256", chunk_size=8192):
+    """
+    calcula o checksum de um arquivo
 
+    """
+    
+    h = hashlib.new(algorithm)
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(chunk_size), b""):
+            h.update(chunk)
+    return h.hexdigest()
+
+####################
 def process_variable_raw_teste_freqs(input_model,
                          input_experiment_id,
                          input_variable_id,
@@ -136,7 +154,7 @@ def process_variable_raw_teste_freqs(input_model,
                          year_max=None,
                          year_list=None):
     """
-    Ingestão da variável climática na camada RAW (CMIP6 via ESGF).
+    ingestão da variável climática na camada RAW (CMIP6 via ESGF).
 
     Args:
         input_model (str): Modelo climático (ex.: "EC-Earth3").
@@ -155,6 +173,26 @@ def process_variable_raw_teste_freqs(input_model,
     """
 
     ####################
+    # função auxiliar para normalizar a informação de período de tempo
+    def _format_period(year_min=None, year_max=None, year_list=None):
+        """
+        retorna uma string representando o período temporal usado
+        """
+        
+        if year_list:
+            if len(year_list) == 1:
+                return f"{year_list[0]}"
+            return f"{min(year_list)}-{max(year_list)}"
+        elif year_min and year_max:
+            return f"{year_min}-{year_max}"
+        elif year_min:
+            return f"{year_min}-end"
+        elif year_max:
+            return f"start-{year_max}"
+        else:
+            return "all"
+    ####################
+
     # início da contagem de tempo
     start_time = time.time()
 
@@ -239,7 +277,12 @@ def process_variable_raw_teste_freqs(input_model,
                 f.write(response.content)
 
             if os.path.exists(file_path):
-                list_nc_files.append(file_path)
+                # cálculo do checksum
+                checksum = compute_checksum(file_path)
+
+                #list_nc_files.append(file_path)
+                list_nc_files.append({"path": file_path, "checksum": checksum})
+                
                 logger_ingestion.info(f"arquivo salvo em {file_path}")
 
         except Exception as e:
@@ -248,6 +291,10 @@ def process_variable_raw_teste_freqs(input_model,
     ####################
     # salvar manifesto JSON
     if list_nc_files:
+        # tratando o  período de dados para o nome do manifesto
+        period_label = _format_period(year_min, year_max, year_list)
+        
+        # metadados da execução
         manifest = {
             "model": input_model,
             "experiment": input_experiment_id,
@@ -255,24 +302,49 @@ def process_variable_raw_teste_freqs(input_model,
             "variant_label": input_variant_label,
             "table_id": table_id,
             "frequency": frequency,
-            "downloaded_files": [os.path.basename(f) for f in list_nc_files],
-            "years": sorted({int(os.path.basename(f).split("_")[-1][:4]) for f in list_nc_files}),
+            "period": period_label,
+            #"downloaded_files": [os.path.basename(f) for f in list_nc_files],
+            "downloaded_files": [
+                                    {
+                                        "file_name": os.path.basename(f["path"]),
+                                        "checksum_sha256": f["checksum"]
+                                    } for f in list_nc_files
+                                ],
+            "years": sorted(
+                                {
+                                    int(os.path.basename(f["path"]).split("_")[-1][:4]) for f in list_nc_files
+                                }
+                            )
         }
+
+        manifest_filename = f"manifest_{input_variable_id}_{input_model.lower()}_{input_experiment_id}_{frequency}_{period_label}.json"
+
         manifest_path = os.path.join(
             output_dir,
             #input_model,
             #input_variable_id,
             f"exp={input_experiment_id}",
             f"freq={frequency}",
-            f"manifest_{input_variable_id}_{input_model.lower()}_{input_experiment_id}_{frequency}.json"
+            #f"manifest_{input_variable_id}_{input_model.lower()}_{input_experiment_id}_{frequency}.json"
+            manifest_filename
         )
         os.makedirs(os.path.dirname(manifest_path), exist_ok=True)
+
         with open(manifest_path, "w", encoding="utf-8") as f:
             json.dump(manifest, f, indent=2)
         logger_ingestion.info(f"manifesto salvo em {manifest_path}")
 
     end_time = time.time()
-    metrics_path = os.path.join(output_dir, f"metrics_raw_{input_variable_id}_{input_model}_{input_experiment_id}_{frequency}.json")
+
+    # métricas
+    metrics_filename = f"metrics_raw_{input_variable_id}_{input_model}_{input_experiment_id}_{frequency}_{period_label}.json"
+
+    metrics_path = os.path.join(output_dir,
+                                f"exp={input_experiment_id}",
+                                f"freq={frequency}",
+                                metrics_filename
+                            )
+    
     compute_raw_metrics(list_nc_files, input_model, input_experiment_id, input_variable_id, frequency, metrics_path, start_time, end_time)
     ####################
     logger_read.info(f"pipeline concluído | raw | arquivos salvos={len(list_nc_files)}")

@@ -18,3 +18,5 @@ services:
       --variable ${VARIABLE}
       --exp ${EXPERIMENT}
       --freq ${FREQ}
+      --year_min ${YEAR_MIN}
+      --year_max ${YEAR_MAX}

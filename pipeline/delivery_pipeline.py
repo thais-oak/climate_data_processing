@@ -349,11 +349,12 @@ def process_variable_delivery_teste(
     
 
     # salvar metrics.json
-    metrics_path = os.path.join(delivery_path, f"metrics_delivery_{variable_id}_{input_model.lower()}_{input_experiment_id}.json")
+    metrics_path = os.path.join(delivery_path, f"metrics_delivery_{variable_id}_{input_model.lower()}_{input_experiment_id}_{frequency}.json")
+
     with open(metrics_path, "w", encoding="utf-8") as f:
         json.dump(metrics, f, indent=2)
-    logger_ingestion.info(f"métricas salvas em {metrics_path}")
 
+    logger_ingestion.info(f"métricas salvas em {metrics_path}")
     logger_ingestion.info(f"pipeline concluído | delivery | tempo total de execução da camada delivery: = {execution_time_seconds: .2f}s")
 ####################
 

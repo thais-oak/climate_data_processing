@@ -136,6 +136,9 @@ if __name__ == "__main__":
     parser.add_argument("--variable", type=str, default="tas", help="Variável climática")
     parser.add_argument("--exp", type=str, default=None, help="Experimento (ex: historical)")
     parser.add_argument("--freq", type=str, default="mon", help="Frequência temporal")
+    parser.add_argument("--year-min", type=int, default=None, help="ano inicial do filtro temporal")
+    parser.add_argument("--year-max", type=int, default=None, help="ano final do filtro temporal")
+    parser.add_argument("--year-list", nargs="+", type=int, default=None, help="lista explícita de anos (ex: --year-list 1910 1915 1920)")
     args = parser.parse_args()
 
     # carregando o arquivo .env com variáveis de ambiente
@@ -171,6 +174,15 @@ if __name__ == "__main__":
     experiment_id = args.exp or variavel_escolhida["experiment_id"]
     frequency = args.freq
 
+    # definindo lista de anos
+    #if args.year_list:
+    #    year_list = args.year_list
+    #elif args.date_range:
+    #    start, end = args.date_range
+    #    year_list = list(range(start, end + 1))
+    #else:
+    #    year_list = None
+
     dir_modelo = modelo_escolhido["nome_dir"]
     dir_modelo_raw = os.path.join(dir_raw, dir_modelo, variavel_escolhida["variable_id"])
     dir_modelo_trusted = os.path.join(dir_trusted, dir_modelo, variavel_escolhida["variable_id"])
@@ -199,9 +211,11 @@ if __name__ == "__main__":
             variavel_escolhida["variant_label"],          # variant_label
             dir_modelo_raw,                               # output_dir
             "Amon",                                       # table_id
-            #"mon",                                        # frequency
+            #"mon",                                       # frequency
             frequency,                                    # frequency
-            year_list=[1910, 1911]                        # filtro de tempo
+            year_min=args.year_min,                       # filtro de tempo
+            year_max=args.year_max,                       # filtro de tempo
+            year_list=args.year_list                      # filtro de tempo
         ),
         "trusted": partial(
             process_variable_trusted_dask_only,
