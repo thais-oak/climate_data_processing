@@ -1,21 +1,41 @@
 version: "3.12"
+
 services:
   raw-pipeline:
     build:
       context: ..
       dockerfile: Dockerfile
+
     container_name: raw_pipeline
+
     env_file:
-      - ../.env
+      - ../.env.docker
+
     volumes:
+    #  - ../pipeline:/app
+      - ../:/app
       - ../datasets:/data
       - ../outputs:/outputs
+    
+    environment:
+      - PYTHONPATH=/app
+
+    # python -m pipeline/main_pipeline.py | executado como módulo
     command: >
-      python main_pipeline.py
+      python -m pipeline.main_pipeline
       --stage raw
       --model ${MODEL}
       --variable ${VARIABLE}
       --exp ${EXPERIMENT}
       --freq ${FREQ}
-      --year_min ${YEAR_MIN}
-      --year_max ${YEAR_MAX}
+      --year-min ${YEAR_MIN}
+      --year-max ${YEAR_MAX}
+    
+    restart: "no"
+
+    deploy:
+      resources:
+        limits:
+          memory: 4G
+        reservations:
+          memory: 2G

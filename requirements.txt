@@ -71,6 +71,7 @@ pyOpenSSL==25.1.0
 pyparsing==3.2.3
 pyspark==4.0.0
 python-dateutil==2.9.0.post0
+python-dotenv==1.1.1
 pytz==2025.2
 PyYAML==6.0.2
 pyzmq==27.0.0

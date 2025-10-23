@@ -211,7 +211,7 @@ __marimo__/
 #/datasets/*.parquet
 #/datasets/ec_earth3/tas/*
 #/datasets/ec_earth3/*
-#datasets/*
+datasets/*
 
 /glue_libs/*
 libs.zip

@@ -145,8 +145,8 @@ if __name__ == "__main__":
     load_dotenv()
 
     # raiz dos dados
-    dir_raiz = r"/home/thais/climate-ingestion/climate_data_processing/datasets"
-    dir_outputs = r"/home/thais/climate-ingestion/climate_data_processing/outputs"
+    #dir_raiz = r"/home/thais/climate-ingestion/climate_data_processing/datasets"
+    #dir_outputs = r"/home/thais/climate-ingestion/climate_data_processing/outputs"
 
     # diretórios das camadas
     #dir_raw = os.path.join(dir_raiz, "raw")
