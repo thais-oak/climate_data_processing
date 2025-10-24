@@ -9,58 +9,26 @@ from collections import Counter, defaultdict
 import logging
 from pyesgf.search import SearchConnection
 import requests
-from copy import copy
 import pytz
 import datetime as dt
 import time
+import numpy as np
+import pandas as pd
 
 import dask.array as da
 
 # configurações de modelos e variáveis
 from config.variables_config import map_variaveis_meta
 from config.models_config import map_modelos_dir
-from transformations.temporal import add_time_features_teste_freqs
+from transformations.temporal import add_time_features_teste_freqs, convert_datetime
+
+# logs
+from pipeline.logger import configurar_logger
 
 selected_tz = pytz.timezone("America/Sao_Paulo")
 ####################
-# configurações de log
-class TZFormatter(logging.Formatter):
-    def __init__(self, fmt=None, datefmt=None, tz=None):
-        super().__init__(fmt=fmt, datefmt=datefmt)
-        self.tz = tz or pytz.UTC
-
-    def formatTime(self, record, datefmt=None):
-        date_time = dt.datetime.fromtimestamp(record.created, self.tz)
-        if datefmt:
-            s = date_time.strftime(datefmt)
-        else:
-            s = date_time.isoformat()
-        return s
-
-# função de configuração do log
-def configurar_logger(nome_logger):
-    logger = logging.getLogger(nome_logger)
-    logger.setLevel(logging.INFO)
-    logger.propagate = False  # evita envio ao root logger
-
-    if not logger.handlers:
-        handler = logging.StreamHandler(sys.stdout)
-
-        # Timezone Brasil (Horário de Brasília)
-        #tz_brasil = pytz.timezone("America/Sao_Paulo")
-
-        formatter = TZFormatter(
-            fmt='%(asctime)s | %(name)s | %(levelname)s | %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S %z',
-            tz=selected_tz
-        )
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
-
-    return logger
-
-logger_read = configurar_logger("leitura_dados")
-logger_ingestion = configurar_logger("ingestao_dados")
+logger_read = configurar_logger("leitura_dados", selected_tz)
+logger_ingestion = configurar_logger("ingestao_dados", selected_tz)
 ####################
 def compute_raw_metrics(list_nc_files, input_model, input_experiment_id, input_variable_id, frequency, output_metrics_path, start_time, end_time):
     """
@@ -77,7 +45,14 @@ def compute_raw_metrics(list_nc_files, input_model, input_experiment_id, input_v
     # abre todos os arquivos em lazy loading
     #ds = xr.open_mfdataset(list_nc_files, engine="h5netcdf", combine="by_coords", parallel=True, chunks={"time": 50})
     ds = xr.open_mfdataset(file_paths, engine="h5netcdf", combine="by_coords", parallel=True, chunks={"time": 50})
+
+    # check da coluna de tempo e conversão se necessário
+    ds = convert_datetime(ds)
+
     array_dask = ds[input_variable_id]
+
+    # extrai unidade de medida da variável climática
+    unit = array_dask.attrs.get("units", "unknown")
 
     # converte para dask dataframe e adiciona features de tempo
     ddf = array_dask.to_dask_dataframe().reset_index()
@@ -88,10 +63,21 @@ def compute_raw_metrics(list_nc_files, input_model, input_experiment_id, input_v
     vals = array_dask.data.ravel()
     vals = vals[~da.isnan(vals)]
 
+    # extrai data-hora do dataset
+    years = np.unique(ds["time"].dt.year.values)
+    start_date = str(ds["time"].values[0])
+    end_date = str(ds["time"].values[-1])
+
+    # extrai anos do dataset
+    start_year = pd.Timestamp(ds["time"].values[0]).year
+    end_year = pd.Timestamp(ds["time"].values[-1]).year
+
     metrics = {
         "time": {
-            "start": str(ds["time"].values[0]),
-            "end": str(ds["time"].values[-1]),
+            #"start": str(ds["time"].values[0]),
+            "start": start_date,
+            #"end": str(ds["time"].values[-1]),
+            "end": end_date,
             "n_steps": len(ds["time"]),
             "frequency": frequency
         },
@@ -118,17 +104,33 @@ def compute_raw_metrics(list_nc_files, input_model, input_experiment_id, input_v
         "meta": {
             "model": input_model,
             "experiment": input_experiment_id,
-            "variable": input_variable_id
+            "variable": input_variable_id,
+            "unit": unit
         },
         "execution_time_seconds": end_time - start_time
     }
 
+    metrics_filename = f"metrics_raw_{input_variable_id}_{input_model}_{input_experiment_id}_{frequency}_{start_year}-{end_year}.json"
+
+    metrics_path = os.path.join(output_metrics_path,
+                                f"exp={input_experiment_id}",
+                                f"freq={frequency}",
+                                metrics_filename
+                            )
+
     # salvar métricas
-    os.makedirs(os.path.dirname(output_metrics_path), exist_ok=True)
-    with open(output_metrics_path, "w") as f:
+    os.makedirs(os.path.dirname(metrics_path), exist_ok=True)
+    with open(metrics_path, "w") as f:
         json.dump(metrics, f, indent=2)
 
-    logger_ingestion.info(f"métricas da camada raw salvas em {output_metrics_path}")
+    logger_ingestion.info(f"métricas da camada raw salvas em {metrics_path}")
+
+    return {
+        "start_year": start_year,
+        "end_year": end_year,
+        "years": years.tolist(),
+        "unit": unit
+    } 
 ####################
 def compute_checksum(file_path, algorithm="sha256", chunk_size=8192):
     """
@@ -287,7 +289,15 @@ def process_variable_raw_teste_freqs(input_model,
 
         except Exception as e:
             logger_ingestion.error(f"erro ao baixar {file_name}: {e}")
+    
+    end_time = time.time()
+    ####################
+    # métricas
+    
+    metrics_raw = compute_raw_metrics(list_nc_files, input_model, input_experiment_id, input_variable_id, frequency, output_dir, start_time, end_time)
 
+    start_year = metrics_raw["start_year"]
+    end_year = metrics_raw["end_year"]
     ####################
     # salvar manifesto JSON
     if list_nc_files:
@@ -302,7 +312,7 @@ def process_variable_raw_teste_freqs(input_model,
             "variant_label": input_variant_label,
             "table_id": table_id,
             "frequency": frequency,
-            "period": period_label,
+            "period": f"{start_year}-{end_year}",
             #"downloaded_files": [os.path.basename(f) for f in list_nc_files],
             "downloaded_files": [
                                     {
@@ -317,7 +327,8 @@ def process_variable_raw_teste_freqs(input_model,
                             )
         }
 
-        manifest_filename = f"manifest_{input_variable_id}_{input_model.lower()}_{input_experiment_id}_{frequency}_{period_label}.json"
+        #manifest_filename = f"manifest_{input_variable_id}_{input_model.lower()}_{input_experiment_id}_{frequency}_{period_label}.json"
+        manifest_filename = f"manifest_{input_variable_id}_{input_model.lower()}_{input_experiment_id}_{frequency}_{start_year}-{end_year}.json"
 
         manifest_path = os.path.join(
             output_dir,
@@ -334,18 +345,6 @@ def process_variable_raw_teste_freqs(input_model,
             json.dump(manifest, f, indent=2)
         logger_ingestion.info(f"manifesto salvo em {manifest_path}")
 
-    end_time = time.time()
-
-    # métricas
-    metrics_filename = f"metrics_raw_{input_variable_id}_{input_model}_{input_experiment_id}_{frequency}_{period_label}.json"
-
-    metrics_path = os.path.join(output_dir,
-                                f"exp={input_experiment_id}",
-                                f"freq={frequency}",
-                                metrics_filename
-                            )
-    
-    compute_raw_metrics(list_nc_files, input_model, input_experiment_id, input_variable_id, frequency, metrics_path, start_time, end_time)
     ####################
     logger_read.info(f"pipeline concluído | raw | arquivos salvos={len(list_nc_files)}")
 
