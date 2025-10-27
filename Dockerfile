@@ -17,6 +17,10 @@ RUN apt-get update && apt-get install -y \
     openjdk-17-jdk-headless \
     && rm -rf /var/lib/apt/lists/*
 
+# cria o usuário com mesmo UID/GID do host | usar esta configuração apenas para execução local
+RUN useradd -m -u 1000 thais
+USER thais
+
 # instalando bibliotecas
 RUN pip install --no-cache-dir \
     dask==2025.7.0 \

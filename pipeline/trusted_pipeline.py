@@ -24,50 +24,15 @@ from config.variables_config import map_variaveis_meta
 
 # transformações
 from transformations.temporal import add_time_features, add_time_features_teste_freqs
-from config.variables_config import map_variaveis_meta
+
+# logs
+from pipeline.logger import configurar_logger
 ####################
 # configurações de timezone
 selected_tz = pytz.timezone("America/Sao_Paulo")
 ####################
-# configurações de log
-class TZFormatter(logging.Formatter):
-    def __init__(self, fmt=None, datefmt=None, tz=None):
-        super().__init__(fmt=fmt, datefmt=datefmt)
-        self.tz = tz or pytz.UTC
-
-    def formatTime(self, record, datefmt=None):
-        date_time = dt.datetime.fromtimestamp(record.created, self.tz)
-        if datefmt:
-            s = date_time.strftime(datefmt)
-        else:
-            s = date_time.isoformat()
-        return s
-
-# função de configuração do log
-def configurar_logger(nome_logger):
-    logger = logging.getLogger(nome_logger)
-    logger.setLevel(logging.INFO)
-    logger.propagate = False  # evita envio ao root logger
-
-    if not logger.handlers:
-        handler = logging.StreamHandler(sys.stdout)
-
-        # Timezone Brasil (Horário de Brasília)
-        #tz_brasil = pytz.timezone("America/Sao_Paulo")
-
-        formatter = TZFormatter(
-            fmt='%(asctime)s | %(name)s | %(levelname)s | %(message)s',
-            datefmt='%Y-%m-%d %H:%M:%S %z',
-            tz=selected_tz
-        )
-        handler.setFormatter(formatter)
-        logger.addHandler(handler)
-
-    return logger
-
-logger_read = configurar_logger("leitura_dados")
-logger_ingestion = configurar_logger("ingestao_dados")
-
+logger_read = configurar_logger("leitura_dados", selected_tz)
+logger_ingestion = configurar_logger("ingestao_dados", selected_tz)
 ########################
 def detect_frequency(input_dir):
     """

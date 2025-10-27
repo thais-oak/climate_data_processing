@@ -31,6 +31,8 @@ services:
       --year-min ${YEAR_MIN}
       --year-max ${YEAR_MAX}
     
+    user: "1000:1000"
+    
     restart: "no"
 
     deploy:

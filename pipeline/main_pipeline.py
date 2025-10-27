@@ -125,6 +125,9 @@ from config.models_config import map_modelos_dir
 from transformations.geo import fix_longitude, select_latam
 from transformations.quality import kelvin_to_celsius, remove_outliers
 
+# utils
+from utils.io_utils import ensure_dir
+
 
 if __name__ == "__main__":
 
@@ -188,9 +191,13 @@ if __name__ == "__main__":
     dir_modelo_trusted = os.path.join(dir_trusted, dir_modelo, variavel_escolhida["variable_id"])
     dir_modelo_delivery = os.path.join(dir_delivery, dir_modelo, variavel_escolhida["variable_id"])
 
-    os.makedirs(dir_modelo_raw, exist_ok=True)
-    os.makedirs(dir_modelo_trusted, exist_ok=True)
-    os.makedirs(dir_modelo_delivery, exist_ok=True)
+    #os.makedirs(dir_modelo_raw, exist_ok=True)
+    #os.makedirs(dir_modelo_trusted, exist_ok=True)
+    #os.makedirs(dir_modelo_delivery, exist_ok=True)
+
+    ensure_dir(dir_modelo_raw)
+    ensure_dir(dir_modelo_trusted)
+    ensure_dir(dir_modelo_delivery)
 
     # mapeando transformações
     transform_funcs = {
