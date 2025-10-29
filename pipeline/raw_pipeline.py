@@ -49,6 +49,13 @@ def compute_raw_metrics(list_nc_files, input_model, input_experiment_id, input_v
     # check da coluna de tempo e conversão se necessário
     ds = convert_datetime(ds)
 
+    # extraindo metadados globais relevantes do dataset
+    meta_attrs = {meta: str(ds.attrs.get(meta, "")) for meta in [
+        "Conventions", "activity_id", "institution_id", "source_id",
+        "grid_label", "nominal_resolution", "tracking_id", "realm",
+        "source_type", "further_info_url", "creation_date", "license"
+    ]}
+
     array_dask = ds[input_variable_id]
 
     # extrai unidade de medida da variável climática
@@ -115,6 +122,7 @@ def compute_raw_metrics(list_nc_files, input_model, input_experiment_id, input_v
     metrics_path = os.path.join(output_metrics_path,
                                 f"exp={input_experiment_id}",
                                 f"freq={frequency}",
+                                "metrics",
                                 metrics_filename
                             )
 
@@ -129,7 +137,8 @@ def compute_raw_metrics(list_nc_files, input_model, input_experiment_id, input_v
         "start_year": start_year,
         "end_year": end_year,
         "years": years.tolist(),
-        "unit": unit
+        "unit": unit,
+        "meta_attrs": meta_attrs
     } 
 ####################
 def compute_checksum(file_path, algorithm="sha256", chunk_size=8192):
@@ -237,38 +246,47 @@ def process_variable_raw_teste_freqs(input_model,
 
         # extrair período do arquivo (YYYYMM-YYYYMM ou YYYY-YYYY)
         period = file_name.split("_")[-1].replace(".nc", "")
-        period_start, period_end = None, None
+        ###period_start, period_end = None, None
+        start_year, end_year = None, None
         try:
-            period_start = period.split("-")[0]
-            period_end = period.split("-")[1]
-            start_year = int(period_start[:4])
-            end_year = int(period_end[:4])
+            if "-" in period:
+                period_start, period_end = period.split("-")
+                start_year = int(period_start[:4])
+                end_year = int(period_end[:4])
+            else:
+                # se houver apenas um ano
+                start_year = end_year = int(period[:4])
+            ###period_start = period.split("-")[0]
+            ###period_end = period.split("-")[1]
+            ###start_year = int(period_start[:4])
+            ###end_year = int(period_end[:4])
         except Exception:
-            logger_read.warning(f"não foi possível extrair anos de {file_name}, pulando")
-            continue
-
-        # filtros
-        if year_min and end_year < year_min:
-            continue
-        if year_max and start_year > year_max:
-            continue
-        if year_list:
-            anos_arquivo = set(range(start_year, end_year + 1))
-            if not any(ano in anos_arquivo for ano in year_list):
+            logger_read.warning(f"não foi possível extrair anos de {file_name} | efetuando download por segurança")
+            ###continue
+        
+        # filtros por ano
+        if start_year and end_year:
+            if year_min and end_year < year_min:
                 continue
-
-        decada = (start_year // 10) * 10
-        decadas[decada] += 1
+            if year_max and start_year > year_max:
+                continue
+            if year_list:
+                anos_arquivo = set(range(start_year, end_year + 1))
+                if not any(ano in anos_arquivo for ano in year_list):
+                    continue
+        
+        ###decada = (start_year // 10) * 10
+        ###decadas[decada] += 1
 
         # diretório de saída
-        year_dir = os.path.join(
-            output_dir,
+        year_dir = os.path.join(output_dir,
             #input_model,
             #input_variable_id,
             f"exp={input_experiment_id}",
             f"freq={frequency}",
-            f"year={start_year}"
+            ###f"year={start_year}"
         )
+
         os.makedirs(year_dir, exist_ok=True)
         file_path = os.path.join(year_dir, file_name)
 
@@ -278,31 +296,79 @@ def process_variable_raw_teste_freqs(input_model,
             with open(file_path, "wb") as f:
                 f.write(response.content)
 
-            if os.path.exists(file_path):
-                # cálculo do checksum
-                checksum = compute_checksum(file_path)
+            ###if os.path.exists(file_path):
+            # cálculo do checksum
+            checksum = compute_checksum(file_path)
 
-                #list_nc_files.append(file_path)
-                list_nc_files.append({"path": file_path, "checksum": checksum})
-                
-                logger_ingestion.info(f"arquivo salvo em {file_path}")
+            #list_nc_files.append(file_path)
+            list_nc_files.append({"path": file_path, "checksum": checksum})
+            
+            logger_ingestion.info(f"arquivo salvo em {file_path}")
 
         except Exception as e:
             logger_ingestion.error(f"erro ao baixar {file_name}: {e}")
     
+    # término da contagem de tempo da execução do pipeline
     end_time = time.time()
     ####################
     # métricas
-    
-    metrics_raw = compute_raw_metrics(list_nc_files, input_model, input_experiment_id, input_variable_id, frequency, output_dir, start_time, end_time)
 
-    start_year = metrics_raw["start_year"]
-    end_year = metrics_raw["end_year"]
+    ###start_year = metrics_raw["start_year"]
+    ###end_year = metrics_raw["end_year"]
     ####################
     # salvar manifesto JSON
     if list_nc_files:
         # tratando o  período de dados para o nome do manifesto
         period_label = _format_period(year_min, year_max, year_list)
+
+        # cálculo de metadados e métricas do dataset
+        metrics_raw = compute_raw_metrics(list_nc_files, input_model, input_experiment_id, input_variable_id, frequency, output_dir, start_time, end_time)
+
+        # range global (anos mínimo e máximo dos arquivos baixados)
+        dataset_start_year = metrics_raw["start_year"]
+        dataset_end_year = metrics_raw["end_year"]
+        dataset_years_available = f"{dataset_start_year}-{dataset_end_year}"
+        dataset_years_list = metrics_raw.get("years", [])
+
+        # unidade da variável climática
+        unit = metrics_raw.get("unit", "unknown")
+
+        # metadados globais do dataset
+        meta_attrs = metrics_raw["meta_attrs"]
+
+        '''
+        # calculando range global (anos mínimo e máximo dos arquivos baixados)
+        all_start_years = []
+        all_end_years = []
+
+        for f in list_nc_files:
+            fname = os.path.basename(f["path"])
+            period_part = fname.split("_")[-1].replace("nc", "")
+
+            try:
+                start_y = int(period_part.split("-")[0][:4])
+                end_y = int(period_part.split("-")[1][:4])
+
+                all_start_years.append(start_y)
+                all_end_years.append(end_y)
+            except Exception as e:
+                logger_ingestion.warning(f"problemas ao definir o período do dataset: {e}")
+                continue
+
+        dataset_start_year = min(all_start_years) if all_start_years else None
+        dataset_end_year = max(all_end_years) if all_end_years else None
+
+        # período efetivamente disponível nos datasets físicos
+        dataset_years_available = (f"{dataset_start_year}-{dataset_end_year}" if dataset_start_year and dataset_end_year else "unknown")
+        '''
+        
+        # período de interesse (filtro inserido no início da execução do pipeline)
+        if year_list:
+            years_selected = sorted(year_list)
+        elif year_min or year_max:
+            years_selected = list(range(year_min or dataset_start_year, (year_max or dataset_end_year) + 1))
+        else:
+            years_selected = None
         
         # metadados da execução
         manifest = {
@@ -312,7 +378,9 @@ def process_variable_raw_teste_freqs(input_model,
             "variant_label": input_variant_label,
             "table_id": table_id,
             "frequency": frequency,
-            "period": f"{start_year}-{end_year}",
+            "dataset_years_available": dataset_years_available,   # período efetivamente disponível no(s) dataset(s) baixado(s)
+            "years_selected": years_selected,   # período do filtro, inserido no início da execução do pipeline no terminal
+            "period": f"{dataset_start_year}-{dataset_end_year}",   # f"{start_year}-{end_year}",
             #"downloaded_files": [os.path.basename(f) for f in list_nc_files],
             "downloaded_files": [
                                     {
@@ -320,15 +388,21 @@ def process_variable_raw_teste_freqs(input_model,
                                         "checksum_sha256": f["checksum"]
                                     } for f in list_nc_files
                                 ],
-            "years": sorted(
-                                {
-                                    int(os.path.basename(f["path"]).split("_")[-1][:4]) for f in list_nc_files
-                                }
-                            )
+            "metadata": meta_attrs,
+            "execution": {
+                "start_time": dt.datetime.fromtimestamp(start_time).isoformat(),
+                "end_time": dt.datetime.fromtimestamp(end_time).isoformat(),
+                "duration_seconds": end_time - start_time
+            }
+            ###"years": sorted(
+            ###                    {
+            ###                        int(os.path.basename(f["path"]).split("_")[-1][:4]) for f in list_nc_files
+            ###                    }
+            ###                )
         }
 
         #manifest_filename = f"manifest_{input_variable_id}_{input_model.lower()}_{input_experiment_id}_{frequency}_{period_label}.json"
-        manifest_filename = f"manifest_{input_variable_id}_{input_model.lower()}_{input_experiment_id}_{frequency}_{start_year}-{end_year}.json"
+        manifest_filename = f"manifest_{input_variable_id}_{input_model.lower()}_{input_experiment_id}_{frequency}_{dataset_start_year}-{dataset_end_year}.json"
 
         manifest_path = os.path.join(
             output_dir,
@@ -336,6 +410,7 @@ def process_variable_raw_teste_freqs(input_model,
             #input_variable_id,
             f"exp={input_experiment_id}",
             f"freq={frequency}",
+            "manifest",
             #f"manifest_{input_variable_id}_{input_model.lower()}_{input_experiment_id}_{frequency}.json"
             manifest_filename
         )
