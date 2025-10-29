@@ -23,7 +23,7 @@ import time
 from config.variables_config import map_variaveis_meta
 
 # transformações
-from transformations.temporal import add_time_features, add_time_features_teste_freqs
+from transformations.temporal import add_time_features, add_time_features_teste_freqs, convert_datetime
 
 # logs
 from pipeline.logger import configurar_logger
@@ -187,6 +187,7 @@ def process_variable_trusted_dask_only(input_model,
                            combine="by_coords",
                            parallel=True,
                            chunks={"time": 50})
+    ds = convert_datetime(ds)
     da = ds[input_variable_id]
 
     # aplica transformações
