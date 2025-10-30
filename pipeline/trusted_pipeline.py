@@ -5,6 +5,7 @@ import sys
 import logging
 from collections import defaultdict
 import json
+from utils.path_utils import get_dir_size_mb, estimate_dataset_size
 
 # manipulação de dados
 import xarray as xr

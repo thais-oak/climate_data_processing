@@ -131,7 +131,7 @@ from utils.io_utils import ensure_dir
 
 if __name__ == "__main__":
 
-    # parser de argumentos (permite escolher a camada)
+    # parser de argumentos para linha de comando
     parser = argparse.ArgumentParser(description="Climate Data Processing - RAW, TRUSTED, DELIVERY")
     parser.add_argument("--stage", choices=["raw", "trusted", "delivery", "all"], default="all",
                         help="Qual camada executar")
@@ -142,6 +142,13 @@ if __name__ == "__main__":
     parser.add_argument("--year-min", type=int, default=None, help="ano inicial do filtro temporal")
     parser.add_argument("--year-max", type=int, default=None, help="ano final do filtro temporal")
     parser.add_argument("--year-list", nargs="+", type=int, default=None, help="lista explícita de anos (ex: --year-list 1910 1915 1920)")
+    parser.add_argument("--apply_pca", action="store_true", help="Aplica PCA na camada delivery")
+    parser.add_argument("--apply_lasso", action="store_true", help="Aplica LASSO na camada delivery")
+    parser.add_argument("--lasso_target_strategy", type=str, default="mean", choices=["mean", "max", "min"], help="Estratégia de target para o LASSO")
+    parser.add_argument("--n_pca_components", type=int, default=3, help="Número de componentes principais para PCA")
+    parser.add_argument("--lasso_regularization", type=float, default=0.1, help="Parâmetro de regularização do LASSO")
+    parser.add_argument("--grid_step", type=float, default=5.0, help="Resolução espacial em graus para reamostragem")
+
     args = parser.parse_args()
 
     # carregando o arquivo .env com variáveis de ambiente
@@ -246,7 +253,16 @@ if __name__ == "__main__":
             input_experiment_id=experiment_id,
             input_dir=dir_modelo_trusted,
             output_dir=dir_modelo_delivery,
-            frequency=frequency
+            frequency=frequency,
+            grid_step=args.grid_step,
+            apply_pca_flag=args.apply_pca,
+            apply_lasso_flag=args.apply_lasso,
+            lasso_target_strategy=args.lasso_target_strategy,
+            n_pca_components=args.n_pca_components,
+            lasso_regularization=args.lasso_regularization,
+            year_min=args.year_min,
+            year_max=args.year_max,
+            year_list=args.year_list
         )
 
 

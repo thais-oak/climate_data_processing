@@ -4,6 +4,7 @@ import logging
 import os
 import sys
 #from utils.path_utils import detect_frequency
+from utils.path_utils import get_dir_size_mb, estimate_dataset_size
 
 # manipulação de datas e timezone
 import pytz
@@ -46,19 +47,135 @@ def compute_entropy(arr):
         hist += 1e-12
         return float(entropy(hist))
 ####################
+def compute_delivery_metrics(
+    df_resampled,
+    df_vector,
+    variable_id,
+    input_model,
+    input_experiment_id,
+    grid_step,
+    frequency,
+    output_dir,
+    pca_metrics: dict,
+    lasso_metrics: dict,
+    feature_map,
+    start_time,
+    end_time
+):
+    """
+    esta função calcula métricas da camada delivery, incluindo entropia, estatísticas descritivas,
+    dimensões e tamanho dos datasets
+    """
+    logger_ingestion.info(f"iniciando cálculo de métricas")
+    # calculando entropia média
+    entropy_values = df_vector.select("grid_list").rdd.map(lambda r: compute_entropy(r[0])).collect()
+    entropy_mean = float(np.mean(entropy_values))
+
+    # contagens
+    n_rows = df_vector.count()
+    n_columns = len(df_vector.columns)
+    n_partitions = df_vector.rdd.getNumPartitions()
+
+    n_lat = df_resampled.select("lat_grid").distinct().count()
+    n_lon = df_resampled.select("lon_grid").distinct().count()
+    n_gridpoints = n_lat * n_lon
+
+    # estatísticas básicas
+    stats_row = (
+        df_resampled
+        .selectExpr(
+            f"mean({variable_id}_mean) as mean",
+            f"stddev({variable_id}_mean) as std",
+            f"min({variable_id}_mean) as min",
+            f"max({variable_id}_mean) as max"
+        )
+        .first()
+    )
+
+    # tempo total
+    #end_time = time.time()
+    execution_time_seconds = end_time - start_time
+
+    # tamanho total em MB (somando todos os arquivos parquet)
+    '''
+    def get_dir_size_mb(path):
+        total_bytes = 0
+        for root, _, files in os.walk(path):
+            for f in files:
+                total_bytes += os.path.getsize(os.path.join(root, f))
+        return round(total_bytes / (1024 * 1024), 2)
+    '''
+    output_size_mb = get_dir_size_mb(output_dir)
+
+    # construção do dicionário de métricas
+    metrics = {
+        "meta": {
+            "model": input_model,
+            "variable": variable_id,
+            "experiment": input_experiment_id,
+            "grid_step": grid_step,
+            "frequency": frequency,
+        },
+        "structure": {
+            "n_rows": n_rows,
+            "n_columns": n_columns,
+            "n_features": len(feature_map),
+            "n_partitions": n_partitions,
+            "n_lat": n_lat,
+            "n_lon": n_lon,
+            "n_gridpoints": n_gridpoints,
+        },
+        "stats": {
+            "mean": float(stats_row["mean"]) if stats_row and stats_row["mean"] is not None else None,
+            "std": float(stats_row["std"]) if stats_row and stats_row["std"] is not None else None,
+            "min": float(stats_row["min"]) if stats_row and stats_row["min"] is not None else None,
+            "max": float(stats_row["max"]) if stats_row and stats_row["max"] is not None else None,
+        },
+        "complexity": {
+            "entropy_mean": entropy_mean,
+            "output_size_mb": output_size_mb,
+            "execution_time_seconds": execution_time_seconds,
+            "throughput_mb_per_s": round(output_size_mb / execution_time_seconds, 4) if execution_time_seconds > 0 else None,
+        },
+        "pca": pca_metrics,
+        "lasso": lasso_metrics,
+        "generated_at": dt.datetime.utcnow().isoformat() + "Z"
+    }
+
+    metrics_filename = f"metrics_delivery_{variable_id}_{input_model.lower().replace("-", "_")}_{input_experiment_id}_{frequency}.json"
+
+    metrics_path = os.path.join(output_dir,
+                                f"exp={input_experiment_id}",
+                                f"freq={frequency}",
+                                "metrics",
+                                metrics_filename
+                            )
+    
+    # salvar métricas
+    os.makedirs(os.path.dirname(metrics_path), exist_ok=True)
+    with open(metrics_path, "w") as f:
+        json.dump(metrics, f, indent=2)
+
+    logger_ingestion.info(f"métricas salvas em {metrics_path}")
+    return metrics
+
+####################
 def process_variable_delivery_teste(
     variable_id,
     input_model,
     input_experiment_id,
     input_dir,
     output_dir,
-    grid_step=2.0,
+    grid_step=5.0,
     apply_pca_flag=False,
     apply_lasso_flag=False,
     lasso_target_strategy="mean",
     n_pca_components=3,
     lasso_regularization=0.1,
-    frequency="mon"
+    frequency="mon",
+    year_min=None,
+    year_max=None,
+    year_list=None
 ):
     """
     pipeline da camada delivery
@@ -86,29 +203,92 @@ def process_variable_delivery_teste(
         lasso_regularization (float): parâmetro de regularização do LASSO
         frequency (str): frequência temporal ("mon" ou "day")
     """
+    ##########
+    # início da contagem de tempo de execução
     start_time = time.time()
-
+    
     logger_ingestion.info(f"inicializando pipeline | delivery")
     logger_ingestion.info(f"config:  var={variable_id} | modelo={input_model} | exp={input_experiment_id} | freq={frequency}")
-    
+    ##########
+    # inicializando pyspark
     spark = SparkSession.builder.appName("ClimateData").getOrCreate()
-
+    ##########
     # UDF para converter array<double> → DenseVector
     array_to_vector_udf = udf(lambda arr: Vectors.dense(arr) if arr is not None else None, VectorUDT())
+    ##########
+    # caminho esperado dos parquet da trusted
+    trusted_path = os.path.join(input_dir, f"exp={input_experiment_id}", f"freq={frequency}")
 
-
+    # tenta carregar manifesto trusted (qualquer manifest_trusted_*.json)
+    trusted_manifest = {}
+    try:
+        manifest_dir = os.path.join(input_dir, f"exp={input_experiment_id}", f"freq={frequency}", "manifest")
+        manifest_glob = list(Path(manifest_dir).glob("manifest_trusted_*.json")) if os.path.isdir(manifest_dir) else []
+        if manifest_glob:
+            mf = str(manifest_glob[0])
+            with open(mf, "r", encoding="utf-8") as fh:
+                trusted_manifest = json.load(fh)
+            logger_ingestion.info(f"manifesto trusted carregado: {mf}")
+        else:
+            logger_ingestion.warning(f"manifesto trusted não encontrado em {manifest_dir}")
+    except Exception as e:
+        logger_ingestion.warning(f"erro ao ler manifesto trusted: {e}")
+        trusted_manifest = {}
+    ##########
     # leitura parquet trusted
-    trusted_path = os.path.join(
-        input_dir,
-        f"exp={input_experiment_id}",
-        f"freq={frequency}"
-        )
-    
-    df_trusted = spark.read.parquet(trusted_path)
-    if df_trusted.count() == 0:
-        logger_ingestion.warning(f"nenhum dado encontrado em {trusted_path}")
-        return
+    try:
+        trusted_path = os.path.join(
+            input_dir,
+            f"exp={input_experiment_id}",
+            f"freq={frequency}"
+            )
+        
+        #df_trusted = spark.read.parquet(trusted_path)
+        df_trusted = spark.read.parquet(input_dir)
 
+        if df_trusted.count() == 0:
+            logger_ingestion.warning(f"nenhum dado encontrado em {trusted_path}")
+            return
+    except Exception as e:
+        logger_ingestion.error(f"erro ao ler parquet em {trusted_path}: {e}")
+
+         # fallback: tenta ler input_dir inteiro (antiga lógica), mas loga
+        try:
+            df_trusted = spark.read.parquet(input_dir)
+            logger_ingestion.warning("usando fallback: leitura de input_dir diretamente (não ideal).")
+        except Exception as e2:
+            logger_ingestion.error(f"falha fallback leitura parquet: {e2}")
+            return
+    
+    # se não houver colunas 'year'/'month' tenta criá-las a partir de 'time' (se existir)
+    cols = [c.lower() for c in df_trusted.columns]
+    if "year" not in cols or "month" not in cols:
+        if "time" in cols:
+            from pyspark.sql.functions import year as spark_year, month as spark_month
+            df_trusted = df_trusted.withColumn("year", spark_year(col("time"))).withColumn("month", spark_month(col("time")))
+            logger_ingestion.info("colunas year/month criadas a partir de 'time'")
+        else:
+            logger_ingestion.warning("dados não têm colunas 'time' nem 'year'/'month' — assumindo que já estão agregados")
+
+    # aplicar filtros de ano (opcional) — útil para não processar tudo
+    if year_list:
+        df_trusted = df_trusted.filter(col("year").isin([int(y) for y in year_list]))
+        logger_ingestion.info(f"aplicado filtro year_list: {year_list}")
+    else:
+        if year_min is not None or year_max is not None:
+            min_y = int(year_min) if year_min is not None else None
+            max_y = int(year_max) if year_max is not None else None
+            if min_y is not None and max_y is not None:
+                df_trusted = df_trusted.filter((col("year") >= min_y) & (col("year") <= max_y))
+                logger_ingestion.info(f"aplicado filtro year_min/year_max: {min_y}-{max_y}")
+            elif min_y is not None:
+                df_trusted = df_trusted.filter(col("year") >= min_y)
+                logger_ingestion.info(f"aplicado filtro year_min: {min_y}")
+            elif max_y is not None:
+                df_trusted = df_trusted.filter(col("year") <= max_y)
+                logger_ingestion.info(f"aplicado filtro year_max: {max_y}")
+
+    ##########
     # reamostragem espacial
     df_resampled = (
         df_trusted
@@ -117,10 +297,12 @@ def process_variable_delivery_teste(
         .groupBy("year", "month", "lat_grid", "lon_grid")
         .agg(avg(variable_id).alias(f"{variable_id}_mean"))
     )
-    var_value = df_resampled.select(variance(f"{variable_id}_mean").alias("var")).first()["var"]
-
+    ###var_value = df_resampled.select(variance(f"{variable_id}_mean").alias("var")).first()["var"]
+    var_row = df_resampled.select(variance(f"{variable_id}_mean").alias("var")).first()
+    var_value = float(var_row["var"]) if var_row and var_row["var"] is not None else None
     logger_transform.info(f"reamostragem concluída | {df_resampled.count()} registros | variância={var_value:.3f}")
-
+    ##########
+    # construindo vetor de features de coordenadas espaciais
     # flatten → vetor de features
     df_vector = (
         df_resampled
@@ -138,30 +320,44 @@ def process_variable_delivery_teste(
     # array<double> → DenseVector
     df_vector = df_vector.withColumn("features", array_to_vector_udf("grid_list"))
 
-
     # salvar feature_map
-    coords_example = df_vector.select("grid_coords").first()["grid_coords"]
+    ###coords_example = df_vector.select("grid_coords").first()["grid_coords"]
+    coords_example_row = df_vector.select("grid_coords").first()
+    if coords_example_row is None:
+        logger_ingestion.error(f"não foi possível extrair coordenadas para feature_map — df_vector vazio")
+        return
+    
+    coords_example = coords_example_row["grid_coords"]
     feature_map = {f"f{i}": (row["lat_grid"], row["lon_grid"]) for i, row in enumerate(coords_example)}
+
     os.makedirs(output_dir, exist_ok=True)
     with open(os.path.join(output_dir, "feature_map.json"), "w", encoding="utf-8") as f:
         json.dump(feature_map, f, indent=2)
-
+    ##########
     # PCA opcional
     pca_metrics = {}
     if apply_pca_flag:
+        pca_metrics["applied"] = True
+        pca_metrics["n_components"] = n_pca_components
         logger_transform.info(f"aplicando PCA | k={n_pca_components}")
+
+        # instanciando o modelo e calculando as componentes
         pca = PCA(k=n_pca_components, inputCol="features", outputCol="pca_features")
         pca_model = pca.fit(df_vector)
         df_vector = pca_model.transform(df_vector)
+
+        # métricas
         explained_variance = pca_model.explainedVariance.toArray()
         pca_metrics["explained_variance"] = explained_variance.tolist()
         pca_metrics["cumulative_variance"] = np.cumsum(explained_variance).tolist()
     else:
+        pca_metrics["applied"] = False
         logger_transform.info("PCA não aplicado")
-
+    ##########
     # LASSO opcional
     lasso_metrics = {}
     if apply_lasso_flag:
+        lasso_metrics["applied"] = True
         target_col = f"{variable_id}_{lasso_target_strategy}"
         if lasso_target_strategy == "mean":
             df_vector = df_vector.withColumn(target_col, expr("aggregate(grid_list, 0D, (acc, x) -> acc + x)/size(grid_list)"))
@@ -172,6 +368,8 @@ def process_variable_delivery_teste(
         else:
             raise ValueError(f"target inválido: {lasso_target_strategy}")
 
+        lasso_metrics["alpha"] = lasso_regularization
+        lasso_metrics["lasso_strategy"] = lasso_target_strategy
         #df_vector = df_vector.withColumn("features_scaled", array_to_vector("grid_list"))
         #assembler_lasso = VectorAssembler(inputCols=["grid_list"], outputCol="features_scaled")
         #df_vector = assembler_lasso.transform(df_vector)
@@ -179,6 +377,7 @@ def process_variable_delivery_teste(
         # array<double> → DenseVector
         df_vector = df_vector.withColumn("features_scaled", array_to_vector_udf("grid_list"))
 
+        # instanciando modelo
         lasso = LinearRegression(
             featuresCol="features_scaled",
             labelCol=target_col,
@@ -187,6 +386,8 @@ def process_variable_delivery_teste(
         )
 
         lasso_model = lasso.fit(df_vector)
+
+        # variáveis selecionadas
         coeffs = lasso_model.coefficients.toArray()
         selected_idx = [i for i, c in enumerate(coeffs) if abs(c) > 1e-6]
         lasso_metrics.update({
@@ -210,7 +411,11 @@ def process_variable_delivery_teste(
                 for i in selected_idx
             }
             })
-
+        else:
+            lasso_metrics["applied"] = False
+            logger_transform.info("LASSO não aplicado")
+    ##########
+    """
     # métricas derivadas: entropia média
     entropy_values = df_vector.select("grid_list").rdd.map(lambda r: compute_entropy(r[0])).collect()
     entropy_mean = float(np.mean(entropy_values))
@@ -235,10 +440,28 @@ def process_variable_delivery_teste(
         )
         .first()
     )
+    """
+    ##########
+        # salvar parquet particionado (exp/freq/year)
+    delivery_path = os.path.join(
+        output_dir,
+        f"exp={input_experiment_id}",
+        f"freq={frequency}"
+    )
 
+    # salvando o dataframe
+    (
+        df_vector
+        .write
+        .mode("overwrite")
+        .partitionBy("year", "month")
+        .parquet(delivery_path)
+    )
+    logger_ingestion.info(f"dados salvos em {delivery_path}")
+    ##########
     end_time = time.time()
     execution_time_seconds = end_time - start_time
-
+    ##########
     # construção do dicionário de métricas
     '''
     metrics = {
@@ -256,7 +479,7 @@ def process_variable_delivery_teste(
         "derived": {"entropy_mean": entropy_mean}
     }
     '''
-
+    '''
     metrics = {
         "meta": {
             "model": input_model,
@@ -293,27 +516,59 @@ def process_variable_delivery_teste(
         "pca": pca_metrics,
         "lasso": lasso_metrics
     }
+    '''
+    ##########
+    ###compute_delivery_metrics(df_resampled, df_vector, variable_id, input_model, input_experiment_id,
+    ###                         grid_step, frequency, output_dir, pca_metrics, lasso_metrics,
+    ###                         feature_map, start_time, end_time)
+    
+    metrics_delivery = compute_delivery_metrics(
+                                    df_resampled=df_resampled,
+                                    df_vector=df_vector,
+                                    variable_id=variable_id,
+                                    input_model=input_model,
+                                    input_experiment_id=input_experiment_id,
+                                    grid_step=grid_step,
+                                    frequency=frequency,
+                                    output_dir=output_dir,
+                                    pca_metrics=pca_metrics,
+                                    lasso_metrics=lasso_metrics,
+                                    feature_map=feature_map,
+                                    start_time=start_time,
+                                    end_time=end_time
+                                )
 
+    ##########
+    # salvar manifesto delivery (construir com ligações às camadas anteriores)
+    # tenta coletar os anos salvos
+    saved_years = [int(r["year"]) for r in df_vector.select("year").distinct().collect()]
 
-    # salvar parquet particionado (exp/freq/year)
-    delivery_path = os.path.join(
-        output_dir,
-        f"exp={input_experiment_id}",
-        f"freq={frequency}"
-    )
+    manifest = {
+        "model": input_model,
+        "experiment": input_experiment_id,
+        "variable": variable_id,
+        "frequency": frequency,
+        "grid_step": grid_step,
+        "pca_applied": bool(apply_pca_flag),
+        "lasso_applied": bool(apply_lasso_flag),
+        "pca_metrics": pca_metrics,
+        "lasso_metrics": lasso_metrics,
+        "source_manifest_trusted": trusted_manifest if trusted_manifest else None,
+        "saved_years": saved_years,
+        "delivery_path": delivery_path,
+        "metrics": metrics_delivery,
+        "generated_at": dt.datetime.utcnow().isoformat() + "Z"
+    }
 
-    # salvando o dataframe
-    (
-        df_vector
-        .write
-        .mode("overwrite")
-        .partitionBy("year", "month")
-        .parquet(delivery_path)
-    )
-    logger_ingestion.info(f"dados salvos em {delivery_path}")
+    manifest_filename = f"manifest_delivery_{variable_id}_{input_model.lower().replace('-', '_')}_{input_experiment_id}_{frequency}.json"
+    manifest_path = os.path.join(output_dir, f"exp={input_experiment_id}", f"freq={frequency}", "manifest", manifest_filename)
+    os.makedirs(os.path.dirname(manifest_path), exist_ok=True)
+    with open(manifest_path, "w", encoding="utf-8") as f:
+        json.dump(manifest, f, indent=2)
+    logger_ingestion.info(f"manifesto delivery salvo em {manifest_path}")
 
     
-
+    '''
     # salvar metrics.json
     metrics_path = os.path.join(delivery_path, f"metrics_delivery_{variable_id}_{input_model.lower()}_{input_experiment_id}_{frequency}.json")
 
@@ -321,6 +576,9 @@ def process_variable_delivery_teste(
         json.dump(metrics, f, indent=2)
 
     logger_ingestion.info(f"métricas salvas em {metrics_path}")
+    '''
+
+    ##########
     logger_ingestion.info(f"pipeline concluído | delivery | tempo total de execução da camada delivery: = {execution_time_seconds: .2f}s")
 ####################
 
