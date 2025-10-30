@@ -116,8 +116,7 @@ def compute_raw_metrics(list_nc_files, input_model, input_experiment_id, input_v
         },
         "execution_time_seconds": end_time - start_time
     }
-
-    metrics_filename = f"metrics_raw_{input_variable_id}_{input_model}_{input_experiment_id}_{frequency}_{start_year}-{end_year}.json"
+    metrics_filename = f"metrics_raw_{input_variable_id}_{input_model.lower().replace("-", "_")}_{input_experiment_id}_{frequency}_{start_year}-{end_year}.json"
 
     metrics_path = os.path.join(output_metrics_path,
                                 f"exp={input_experiment_id}",
@@ -284,7 +283,7 @@ def process_variable_raw_teste_freqs(input_model,
             #input_variable_id,
             f"exp={input_experiment_id}",
             f"freq={frequency}",
-            ###f"year={start_year}"
+            f"year={start_year}"
         )
 
         os.makedirs(year_dir, exist_ok=True)
@@ -379,6 +378,7 @@ def process_variable_raw_teste_freqs(input_model,
             "table_id": table_id,
             "frequency": frequency,
             "dataset_years_available": dataset_years_available,   # período efetivamente disponível no(s) dataset(s) baixado(s)
+            "unit": unit,
             "years_selected": years_selected,   # período do filtro, inserido no início da execução do pipeline no terminal
             "period": f"{dataset_start_year}-{dataset_end_year}",   # f"{start_year}-{end_year}",
             #"downloaded_files": [os.path.basename(f) for f in list_nc_files],
@@ -402,7 +402,7 @@ def process_variable_raw_teste_freqs(input_model,
         }
 
         #manifest_filename = f"manifest_{input_variable_id}_{input_model.lower()}_{input_experiment_id}_{frequency}_{period_label}.json"
-        manifest_filename = f"manifest_{input_variable_id}_{input_model.lower()}_{input_experiment_id}_{frequency}_{dataset_start_year}-{dataset_end_year}.json"
+        manifest_filename = f"manifest_raw_{input_variable_id}_{input_model.lower().replace("-", "_")}_{input_experiment_id}_{frequency}_{dataset_start_year}-{dataset_end_year}.json"
 
         manifest_path = os.path.join(
             output_dir,

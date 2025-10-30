@@ -234,7 +234,10 @@ if __name__ == "__main__":
             input_dir=dir_modelo_raw,
             output_dir=dir_modelo_trusted,
             map_transform_funcs=transform_funcs,
-            table_id="Amon"
+            table_id="Amon",
+            year_min=args.year_min,                       # filtro de tempo
+            year_max=args.year_max,                       # filtro de tempo
+            year_list=args.year_list                      # filtro de tempo
         ),
         "delivery": partial(
             process_variable_delivery_teste,

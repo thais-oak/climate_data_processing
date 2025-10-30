@@ -21,6 +21,7 @@ import time
 
 # configurações de modelos e variáveis
 from config.variables_config import map_variaveis_meta
+from config.models_config import map_modelos_dir
 
 # transformações
 from transformations.temporal import add_time_features, add_time_features_teste_freqs, convert_datetime
@@ -168,51 +169,134 @@ def process_variable_trusted_dask_only(input_model,
     frequency = detect_frequency(input_dir)
     logger_ingestion.info(f"frequência detectada: {frequency}")
     logger_ingestion.info(f"config: model={input_model}, exp={input_experiment_id}, var={input_variable_id}, table={table_id}, freq={frequency}")
+    ####################
+    # recuperarando o manifesto da camada raw
+    # obtém nome padronizado do diretório a partir do mapeamento de modelos
+    input_model_norm = map_modelos_dir.get(input_model, {}).get("nome_dir", input_model.lower().replace("-", "_"))
 
-    # selecionando transformações
-    variavel_escolhida = map_variaveis_meta[input_variable_id]
-    logger_ingestion.info(f"transformações aplicadas: {variavel_escolhida['transformations']}")
+    raw_manifest_path = os.path.join(
+        input_dir,
+        f"exp={input_experiment_id}",
+        f"freq={frequency}",
+        "manifest"
+        #f"manifest_{input_variable_id}_{input_model.lower()}_{input_experiment_id}_{frequency}.json"
+    )
 
+    raw_manifest_pattern = os.path.join(raw_manifest_path,
+                                        f"manifest_raw*.json")
+    manifest_files = glob.glob(raw_manifest_pattern)
+
+    logger_ingestion.info(f"manifesto raw: {raw_manifest_pattern}")
+
+    if manifest_files:
+        manifest_raw_path = manifest_files[0]
+
+        with open(manifest_raw_path, "r") as f:
+            raw_manifest = json.load(f)
+
+            #unit = manifest_raw_path.get("unit", None)
+
+        logger_ingestion.info(f"manifesto raw carregado: {manifest_raw_path}")
+    
+    else:
+        raw_manifest = {}
+        logger_ingestion.warning(f"manifesto raw não encontrado em {raw_manifest_path}")
+    ####################
     # listando arquivos NetCDF
     nc_files = glob.glob(os.path.join(input_dir, "**", "*.nc"), recursive=True)
+
+
     if not nc_files:
         logger_ingestion.warning("nenhum arquivo encontrado na camada raw")
         return
 
-    logger_ingestion.info(f"{len(nc_files)} arquivos encontrados")
+    logger_ingestion.info(f"{len(nc_files)} arquivos encontrados:\n{nc_files}")
 
-    # abre todos os NetCDFs em lazy loading (Dask gerencia memória)
-    ds = xr.open_mfdataset(nc_files,
-                           engine="h5netcdf",
-                           combine="by_coords",
-                           parallel=True,
-                           chunks={"time": 50})
+    # abrindo todos os NetCDFs em lazy loading com gerenciamento de memória do dask
+    if len(nc_files) == 1:
+        ds = xr.open_dataset(nc_files[0],
+                             engine="h5netcdf",
+                             chunks={"time": 50}
+                            )
+        logger_ingestion.info(f"{len(nc_files)} arquivo carregado com sucesso")
+
+    else:
+        ds = xr.open_mfdataset(nc_files,
+                               engine="h5netcdf",
+                               combine="by_coords",
+                               parallel=True,
+                               chunks={"time": 50}
+                            )
+        
+        logger_ingestion.info(f"{len(nc_files)} arquivos carregados com sucesso")
+    ####################
+    # conversão da coluna de timestamp para datetime caso necessário
     ds = convert_datetime(ds)
+
+    # anos disponíveis nos dados brutos
+    available_years = ds["time"].dt.year.values
+    available_years_set = set(np.unique(available_years))
+
+    # aplicar filtros de anos
+    if year_list:
+        # filtro pela lista de anos
+        requested_years_set = set(year_list)
+    else:
+        # filtro pelos anos mínimo e máximo
+        year_min = int(year_min) if year_min is not None else None
+        year_max = int(year_max) if year_max is not None else None
+
+        requested_years_set = set(range(year_min or available_years.min(),
+                                        (year_max or available_years.max()) + 1))
+    
+    logger_ingestion.info(f"year_min={year_min}, year_max={year_max}, year_list={year_list}")
+    logger_ingestion.info(f"período a ser processado: {requested_years_set}")
+
+    processed_years_set = requested_years_set & available_years_set
+    if not processed_years_set:
+        logger_ingestion.warning("nenhum ano do filtro disponível nos arquivos da camada raw")
+        return
+    
+    # filtra dataset apenas para os anos selecionados
+    logger_ingestion.info(f"executando filtragem por ano")
+    ds = ds.sel(time=np.isin(ds["time"].dt.year, list(processed_years_set)))
+
+    # selecionando a variável climática
     da = ds[input_variable_id]
+
+    # selecionando transformações
+    variavel_escolhida = map_variaveis_meta[input_variable_id]
+    logger_ingestion.info(f"transformações a serem aplicadas: {variavel_escolhida['transformations']}")
 
     # aplica transformações
     for transform in variavel_escolhida["transformations"]:
         logger_ingestion.info(f"aplicando {transform}")
         da = map_transform_funcs[transform](da)
 
-    # converte para dataframe com Dask (sem puxar tudo para memória)
+    # converte para dask dataframe
     #df = da.to_dataframe().reset_index()
     #ddf = dd.from_pandas(df, npartitions="auto")
+    logger_ingestion.info(f"convertendo para dask dataframe")
     ddf = da.to_dask_dataframe().reset_index()
+
+    logger_ingestion.info(f"criando colunas ano/mês")
     ddf = add_time_features_teste_freqs(ddf, frequency=frequency)
 
+    # garantindo que a coluna de tempo esteja em milissegundos
     if "time" in ddf.columns:
-        ddf["time"] = ddf["time"].astype("datetime64[ms]")  # converte para milissegundos
-
-
+        ddf["time"] = ddf["time"].astype("datetime64[ms]")  
+    ####################
     # define partições de saída
     partition_cols = ["year", "month"]
 
+    # caso a frequência dos datasets seja diária, inclui partição de dia
     if frequency == "day":
         partition_cols.append("day")
 
-    # cria diretório base para cada ano, similar à estrutura raw
+    # criando diretório base para cada ano
     for year in ddf["year"].unique().compute():
+        logger_ingestion.info(f"salvando o dataset por ano")
+
         year_dir = os.path.join(
             output_dir,
             f"exp={input_experiment_id}",
@@ -221,10 +305,10 @@ def process_variable_trusted_dask_only(input_model,
         )
         os.makedirs(year_dir, exist_ok=True)
 
-        # filtra dataframe apenas para o ano atual
+        # filtrando dask dataframe apenas para o ano atual
         ddf_year = ddf[ddf["year"] == year]
 
-        # salva Parquet particionado dentro do diretório do ano
+        # salvando Parquet particionado dentro do diretório do ano
         ddf_year.to_parquet(
             year_dir,
             engine="pyarrow",
@@ -246,19 +330,63 @@ def process_variable_trusted_dask_only(input_model,
 
     # término da execução
     end_time = time.time()
-
+    ####################
     # tratando o  período de dados para o nome do manifesto
     period_label = _format_period(year_min, year_max, year_list)
-
+    ####################
     # métricas
     metrics_filename = f"metrics_trusted_{input_variable_id}_{input_model}_{input_experiment_id}_{frequency}_{period_label}.json"
 
     metrics_path = os.path.join(output_dir,
                                 f"exp={input_experiment_id}",
                                 f"freq={frequency}",
+                                "metrics",
                                 metrics_filename
                             )
+    
     compute_trusted_metrics(ds, ddf, metrics_path, input_model, input_experiment_id, input_variable_id, frequency, start_time, end_time)
+    ####################
+    # manifesto
+    # verifica se a variável climática de temperatura sofreu conversão de unidade
+    if "kelvin_to_celsius" in variavel_escolhida["transformations"]:
+        unit = "°C"
+        raw_manifest["unit"] = unit
+
+        # dados do manifesto
+        manifest_data = {
+            "model": input_model,
+            "experiment": input_experiment_id,
+            "variable": input_variable_id,
+            "frequency": frequency,
+            "unit": unit,
+            "source_manifest": raw_manifest if raw_manifest else None,
+            "transformations_applied": variavel_escolhida["transformations"],
+            "output_dir": output_dir,
+            "years_selected": sorted([int(y) for y in ddf["year"].unique().compute().tolist()]),
+            "execution_time_seconds": end_time - start_time
+        }
+
+    else:
+        # herda a unidade do manifesto da raw, se existir
+        unit = raw_manifest.get("unit", None)
+    # construindo nome do arquivo
+    manifest_filename = f"manifest_trusted_{input_variable_id}_{input_model.lower()}_{input_experiment_id}_{frequency}.json"
+
+    # construindo o diretório do arquivo
+    manifest_path = os.path.join(
+        output_dir,
+        f"exp={input_experiment_id}",
+        f"freq={frequency}",
+        "manifest",
+        manifest_filename
+    )
+    os.makedirs(os.path.dirname(manifest_path), exist_ok=True)
+
+    with open(manifest_path, "w") as f:
+        json.dump(manifest_data, f, indent=2)
+
+    logger_ingestion.info(f"manifesto trusted salvo em {manifest_path}")
+    ####################
 
     logger_ingestion.info(f"pipeline concluído | trusted | salvos em {output_dir} | particionado por {partition_cols})")
 
