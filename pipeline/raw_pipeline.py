@@ -1,9 +1,11 @@
+# utils
 import xarray as xr
 import os
 import sys
 import glob
 import json
 import hashlib
+from utils.path_utils import estimate_dataset_size, get_dir_size_mb
 
 from collections import Counter, defaultdict
 import logging
@@ -79,6 +81,11 @@ def compute_raw_metrics(list_nc_files, input_model, input_experiment_id, input_v
     start_year = pd.Timestamp(ds["time"].values[0]).year
     end_year = pd.Timestamp(ds["time"].values[-1]).year
 
+    # cálculo do tamanho dos datasets
+    estimated_memory_size = estimate_dataset_size(ds)
+    output_dir_size = get_dir_size_mb(output_metrics_path)
+
+
     metrics = {
         "time": {
             #"start": str(ds["time"].values[0]),
@@ -107,6 +114,10 @@ def compute_raw_metrics(list_nc_files, input_model, input_experiment_id, input_v
         "parquet": {
             "n_rows": int(ddf.shape[0].compute()),
             "n_partitions": ddf.npartitions
+        },
+        "size": {
+            "estimated_memory_mb": estimated_memory_size,
+            "output_dir_size_mb": output_dir_size
         },
         "meta": {
             "model": input_model,
