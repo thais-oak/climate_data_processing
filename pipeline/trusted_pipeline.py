@@ -77,6 +77,10 @@ def compute_trusted_metrics(ds, ddf, output_metrics_path, input_model, input_exp
     array_flat = array_dask.ravel()  # transforma em 1D
     array_flat = array_flat[~da.isnan(array_flat)]  # remove NaNs
 
+    # cálculo do tamanho dos datasets
+    estimated_memory_size = estimate_dataset_size(ds)
+    output_dir_size = get_dir_size_mb(output_metrics_path)
+
     # percentis e estatísticas
     metrics["stats"] = {
         "mean": float(array_flat.mean().compute()),
@@ -94,6 +98,12 @@ def compute_trusted_metrics(ds, ddf, output_metrics_path, input_model, input_exp
     metrics["parquet"] = {
         "n_rows": int(ddf.shape[0].compute()),
         "n_partitions": ddf.npartitions
+    }
+
+    # inserindo os tamanhos dos datasets
+    metrics["size"] = {
+        "estimated_memory_mb": estimated_memory_size,
+        "output_dir_size_mb": output_dir_size
     }
 
     # metadados gerais
