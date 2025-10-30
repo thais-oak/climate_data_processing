@@ -241,10 +241,21 @@ if __name__ == "__main__":
         ),
         "delivery": partial(
             process_variable_delivery_teste,
-            dir_modelo_trusted,
-            dir_modelo_delivery,
-            variavel_escolhida["variable_id"]
+            variable_id=variavel_escolhida["variable_id"],
+            input_model=modelo_escolhido["nome"],
+            input_experiment_id=experiment_id,
+            input_dir=dir_modelo_trusted,
+            output_dir=dir_modelo_delivery,
+            frequency=frequency
         )
+
+
+        ###"delivery": partial(
+        ###    process_variable_delivery_teste,
+        ###    dir_modelo_trusted,
+        ###    dir_modelo_delivery,
+        ###    variavel_escolhida["variable_id"]
+        ###)
     }
 
     # execução
