@@ -148,7 +148,8 @@ def compute_raw_metrics(list_nc_files, input_model, input_experiment_id, input_v
         "end_year": end_year,
         "years": years.tolist(),
         "unit": unit,
-        "meta_attrs": meta_attrs
+        "meta_attrs": meta_attrs,
+        "metrics_path": metrics_path
     } 
 ####################
 def compute_checksum(file_path, algorithm="sha256", chunk_size=8192):
@@ -400,6 +401,7 @@ def process_variable_raw_teste_freqs(input_model,
                                     } for f in list_nc_files
                                 ],
             "metadata": meta_attrs,
+            "metrics_path": metrics_raw["metrics_path"],
             "execution": {
                 "start_time": dt.datetime.fromtimestamp(start_time).isoformat(),
                 "end_time": dt.datetime.fromtimestamp(end_time).isoformat(),

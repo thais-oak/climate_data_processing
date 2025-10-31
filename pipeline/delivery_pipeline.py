@@ -3,6 +3,8 @@ import json
 import logging
 import os
 import sys
+import glob
+from pathlib import Path
 #from utils.path_utils import detect_frequency
 from utils.path_utils import get_dir_size_mb, estimate_dataset_size
 
@@ -59,6 +61,7 @@ def compute_delivery_metrics(
     pca_metrics: dict,
     lasso_metrics: dict,
     feature_map,
+    inherited_manifest,
     start_time,
     end_time
 ):
@@ -97,15 +100,28 @@ def compute_delivery_metrics(
     execution_time_seconds = end_time - start_time
 
     # tamanho total em MB (somando todos os arquivos parquet)
-    '''
-    def get_dir_size_mb(path):
-        total_bytes = 0
-        for root, _, files in os.walk(path):
-            for f in files:
-                total_bytes += os.path.getsize(os.path.join(root, f))
-        return round(total_bytes / (1024 * 1024), 2)
-    '''
-    output_size_mb = get_dir_size_mb(output_dir)
+    # cálculo do tamanho dos datasets
+    estimated_memory_size = estimate_dataset_size(df_resampled)
+    output_dir_size = get_dir_size_mb(output_dir)
+
+    # lendo o tamanho da camada trusted para comparação
+    if inherited_manifest:
+        trusted_metrics_path = inherited_manifest.get("metrics_path")
+
+        # abre arquivo de métricas
+        if trusted_metrics_path and os.path.exists(trusted_metrics_path):
+            try:
+                with open(trusted_metrics_path, "r", encoding="utf-8") as mt:
+                    trusted_metrics = json.load(mt)
+
+                # obtém o tamanho salvo da trusted
+                trusted_size = trusted_metrics.get("size", {}).get("output_dir_size_mb")
+
+                if trusted_size and trusted_size > 0:
+                    reduction_percent = 100 * (1 - (output_dir_size / trusted_size))
+            except Exception as e:
+                logger_ingestion.warning(f"falha ao ler métricas da trusted: {e}")
+
 
     # construção do dicionário de métricas
     metrics = {
@@ -131,15 +147,21 @@ def compute_delivery_metrics(
             "min": float(stats_row["min"]) if stats_row and stats_row["min"] is not None else None,
             "max": float(stats_row["max"]) if stats_row and stats_row["max"] is not None else None,
         },
+        "size": {
+                "estimated_memory_mb": estimated_memory_size,
+                "output_dir_size_mb": output_dir_size,
+                "trusted_size_mb": trusted_size,
+                "reduction_from_trusted_percent": round(reduction_percent, 2) if reduction_percent is not None else None
+
+        },
         "complexity": {
             "entropy_mean": entropy_mean,
-            "output_size_mb": output_size_mb,
+            "output_dir_size_mb": output_dir_size,
             "execution_time_seconds": execution_time_seconds,
-            "throughput_mb_per_s": round(output_size_mb / execution_time_seconds, 4) if execution_time_seconds > 0 else None,
+            "throughput_mb_per_s": round(output_dir_size / execution_time_seconds, 4) if execution_time_seconds > 0 else None,
         },
         "pca": pca_metrics,
-        "lasso": lasso_metrics,
-        "generated_at": dt.datetime.utcnow().isoformat() + "Z"
+        "lasso": lasso_metrics
     }
 
     metrics_filename = f"metrics_delivery_{variable_id}_{input_model.lower().replace("-", "_")}_{input_experiment_id}_{frequency}.json"
@@ -223,11 +245,19 @@ def process_variable_delivery_teste(
     trusted_manifest = {}
     try:
         manifest_dir = os.path.join(input_dir, f"exp={input_experiment_id}", f"freq={frequency}", "manifest")
-        manifest_glob = list(Path(manifest_dir).glob("manifest_trusted_*.json")) if os.path.isdir(manifest_dir) else []
+        #manifest_glob = list(Path(manifest_dir).glob("manifest_trusted_*.json")) if os.path.isdir(manifest_dir) else []
+        manifest_glob = []
+        manifest_path_obj = Path(manifest_dir)
+
+        if manifest_path_obj.exists() and manifest_path_obj.is_dir():
+            manifest_glob = list(manifest_path_obj.glob("manifest_trusted_*.json"))
+
         if manifest_glob:
             mf = str(manifest_glob[0])
             with open(mf, "r", encoding="utf-8") as fh:
                 trusted_manifest = json.load(fh)
+            
+            #trusted_metrics_path = trusted_manifest.get("metrics_path")
             logger_ingestion.info(f"manifesto trusted carregado: {mf}")
         else:
             logger_ingestion.warning(f"manifesto trusted não encontrado em {manifest_dir}")
@@ -235,31 +265,58 @@ def process_variable_delivery_teste(
         logger_ingestion.warning(f"erro ao ler manifesto trusted: {e}")
         trusted_manifest = {}
     ##########
-    # leitura parquet trusted
+    # leitura camada trusted
+    trusted_base_path = os.path.join(
+    input_dir,
+    f"exp={input_experiment_id}",
+    f"freq={frequency}"
+    )
+
+    trusted_data_path = os.path.join(
+        input_dir,
+        f"exp={input_experiment_id}",
+        f"freq={frequency}",
+        "year=*/month=*"
+        )
+    # expandindo todos os diretórios year/month usando glob
+    pattern = os.path.join(trusted_base_path, "year=*/month=*")
+    all_partition_paths = glob.glob(pattern)
+
+    if not all_partition_paths:
+        logger_ingestion.warning(f"nenhum diretório de partição encontrado com o padrão: {pattern}")
+    else:
+        # Spark lê todas as partições
+        df_trusted = spark.read.parquet(*all_partition_paths)
+        logger_ingestion.info(f"diretórios lidos com sucesso: {len(all_partition_paths)} partições")
+
+        # Se necessário, aplicar filtro year_min/year_max
+        if "year" not in df_trusted.columns:
+            from pyspark.sql.functions import year as extract_year, month as extract_month
+            df_trusted = df_trusted.withColumn("year", extract_year("time"))
+            df_trusted = df_trusted.withColumn("month", extract_month("time"))
+
+        df_trusted = df_trusted.filter((df_trusted.year >= year_min) & (df_trusted.year <= year_max))
+    '''
     try:
-        trusted_path = os.path.join(
-            input_dir,
-            f"exp={input_experiment_id}",
-            f"freq={frequency}"
-            )
-        
         #df_trusted = spark.read.parquet(trusted_path)
-        df_trusted = spark.read.parquet(input_dir)
+        df_trusted = spark.read.parquet(trusted_data_path)
+
+        logger_ingestion.info(f"diretório lido com sucesso: {trusted_data_path}")
 
         if df_trusted.count() == 0:
-            logger_ingestion.warning(f"nenhum dado encontrado em {trusted_path}")
+            logger_ingestion.warning(f"nenhum dado encontrado em {trusted_data_path}")
             return
     except Exception as e:
-        logger_ingestion.error(f"erro ao ler parquet em {trusted_path}: {e}")
+        logger_ingestion.error(f"erro ao ler parquet em {trusted_data_path}: {e}")
 
          # fallback: tenta ler input_dir inteiro (antiga lógica), mas loga
         try:
             df_trusted = spark.read.parquet(input_dir)
-            logger_ingestion.warning("usando fallback: leitura de input_dir diretamente (não ideal).")
+            logger_ingestion.warning("usando fallback: leitura de input_dir diretamente")
         except Exception as e2:
             logger_ingestion.error(f"falha fallback leitura parquet: {e2}")
             return
-    
+    '''
     # se não houver colunas 'year'/'month' tenta criá-las a partir de 'time' (se existir)
     cols = [c.lower() for c in df_trusted.columns]
     if "year" not in cols or "month" not in cols:
@@ -534,6 +591,7 @@ def process_variable_delivery_teste(
                                     pca_metrics=pca_metrics,
                                     lasso_metrics=lasso_metrics,
                                     feature_map=feature_map,
+                                    inherited_manifest=trusted_manifest,
                                     start_time=start_time,
                                     end_time=end_time
                                 )

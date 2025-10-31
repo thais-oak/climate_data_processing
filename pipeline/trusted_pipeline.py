@@ -50,7 +50,7 @@ def detect_frequency(input_dir):
 
 
 ######################################
-def compute_trusted_metrics(ds, ddf, output_metrics_path, input_model, input_experiment_id, input_variable_id, frequency, execution_start=None, execution_end=None):
+def compute_trusted_metrics(ds, ddf, output_metrics_path, input_model, input_experiment_id, input_variable_id, frequency, period, execution_start=None, execution_end=None):
     """
     cálculo e armazenamento de métricas de qualidade e estrutura dos dados da camada trusted
     """
@@ -118,14 +118,28 @@ def compute_trusted_metrics(ds, ddf, output_metrics_path, input_model, input_exp
         metrics["execution_time_seconds"] = execution_end - execution_start
 
     # salvando em JSON
-    os.makedirs(os.path.dirname(output_metrics_path), exist_ok=True)
-    with open(output_metrics_path, "w") as f:
+    metrics_filename = f"metrics_trusted_{input_variable_id}_{input_model}_{input_experiment_id}_{frequency}_{period}.json"
+
+    metrics_path = os.path.join(output_metrics_path,
+                                f"exp={input_experiment_id}",
+                                f"freq={frequency}",
+                                "metrics",
+                                metrics_filename
+                            )
+    
+
+    os.makedirs(os.path.dirname(metrics_path), exist_ok=True)
+    with open(metrics_path, "w") as f:
         json.dump(metrics, f, indent=2)
     
     if "execution_time_seconds" in metrics:
         logger_ingestion.info(f"tempo total da camada trusted: {metrics['execution_time_seconds']:.2f} segundos")
     
-    logger_ingestion.info(f"métricas salvas em {output_metrics_path}")
+    logger_ingestion.info(f"métricas salvas: {metrics_path}")
+
+    return {
+        "metrics_path": metrics_path
+    }
 
 ######################################
 def process_variable_trusted_dask_only(input_model,
@@ -206,6 +220,8 @@ def process_variable_trusted_dask_only(input_model,
             raw_manifest = json.load(f)
 
             #unit = manifest_raw_path.get("unit", None)
+        # metadados globais do dataset
+        inherired_metadata = raw_manifest.get("metadata")
 
         logger_ingestion.info(f"manifesto raw carregado: {manifest_raw_path}")
     
@@ -306,8 +322,6 @@ def process_variable_trusted_dask_only(input_model,
 
     # criando diretório base para cada ano
     for year in ddf["year"].unique().compute():
-        logger_ingestion.info(f"salvando o dataset por ano")
-
         year_dir = os.path.join(
             output_dir,
             f"exp={input_experiment_id}",
@@ -326,7 +340,8 @@ def process_variable_trusted_dask_only(input_model,
             write_index=False,
             partition_on=[col for col in partition_cols if col != "year"]  # ano já é diretório
         )
-        #logger_ingestion.info(f"arquivos trusted salvos em {year_dir} | particionado por {partition_cols[1:]}")
+    logger_ingestion.info(f"arquivos salvos")
+    #logger_ingestion.info(f"arquivos trusted salvos em {year_dir} | particionado por {partition_cols[1:]}")
     
     '''
     # salva em Parquet particionado
@@ -346,16 +361,7 @@ def process_variable_trusted_dask_only(input_model,
     period_label = _format_period(year_min, year_max, year_list)
     ####################
     # métricas
-    metrics_filename = f"metrics_trusted_{input_variable_id}_{input_model}_{input_experiment_id}_{frequency}_{period_label}.json"
-
-    metrics_path = os.path.join(output_dir,
-                                f"exp={input_experiment_id}",
-                                f"freq={frequency}",
-                                "metrics",
-                                metrics_filename
-                            )
-    
-    compute_trusted_metrics(ds, ddf, metrics_path, input_model, input_experiment_id, input_variable_id, frequency, start_time, end_time)
+    metrics_trusted = compute_trusted_metrics(ds, ddf, output_dir, input_model, input_experiment_id, input_variable_id, frequency, period_label, start_time, end_time)
     ####################
     # manifesto
     # verifica se a variável climática de temperatura sofreu conversão de unidade
@@ -370,10 +376,11 @@ def process_variable_trusted_dask_only(input_model,
             "variable": input_variable_id,
             "frequency": frequency,
             "unit": unit,
-            "source_manifest": raw_manifest if raw_manifest else None,
             "transformations_applied": variavel_escolhida["transformations"],
             "output_dir": output_dir,
             "years_selected": sorted([int(y) for y in ddf["year"].unique().compute().tolist()]),
+            "metadata": inherired_metadata,
+            "metrics_path": metrics_trusted["metrics_path"],
             "execution_time_seconds": end_time - start_time
         }
 
