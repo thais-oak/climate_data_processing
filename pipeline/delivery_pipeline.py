@@ -60,6 +60,8 @@ def compute_delivery_metrics(
     output_dir,
     pca_metrics: dict,
     lasso_metrics: dict,
+    apply_pca: bool,
+    apply_lasso: bool,
     feature_map,
     inherited_manifest,
     start_time,
@@ -165,13 +167,51 @@ def compute_delivery_metrics(
     }
 
     metrics_filename = f"metrics_delivery_{variable_id}_{input_model.lower().replace("-", "_")}_{input_experiment_id}_{frequency}.json"
-
-    metrics_path = os.path.join(output_dir,
-                                f"exp={input_experiment_id}",
-                                f"freq={frequency}",
-                                "metrics",
-                                metrics_filename
-                            )
+    
+    if not apply_pca and not apply_lasso:
+        # caso: sem PCA e sem LASSO
+        metrics_path = os.path.join(
+            output_dir,
+            f"exp={input_experiment_id}",
+            f"freq={frequency}",
+            f"apply_pca={False}",
+            f"apply_lasso={False}",
+            "metrics",
+            metrics_filename
+        )
+    elif apply_pca and not apply_lasso:
+        # caso: com PCA e sem LASSO
+        metrics_path = os.path.join(
+            output_dir,
+            f"exp={input_experiment_id}",
+            f"freq={frequency}",
+            f"apply_pca={True}",
+            f"apply_lasso={False}",
+            "metrics",
+            metrics_filename
+        )
+    elif not apply_pca and apply_lasso:
+        # caso: sem PCA e com LASSO
+        metrics_path = os.path.join(
+            output_dir,
+            f"exp={input_experiment_id}",
+            f"freq={frequency}",
+            f"apply_pca={False}",
+            f"apply_lasso={True}",
+            "metrics",
+            metrics_filename
+        )
+    elif apply_pca and apply_lasso:
+        # caso: com PCA e com LASSO
+        metrics_path = os.path.join(
+            output_dir,
+            f"exp={input_experiment_id}",
+            f"freq={frequency}",
+            f"apply_pca={True}",
+            f"apply_lasso={True}",
+            "metrics",
+            metrics_filename
+        )
     
     # salvar métricas
     os.makedirs(os.path.dirname(metrics_path), exist_ok=True)
@@ -245,7 +285,6 @@ def process_variable_delivery_teste(
     trusted_manifest = {}
     try:
         manifest_dir = os.path.join(input_dir, f"exp={input_experiment_id}", f"freq={frequency}", "manifest")
-        #manifest_glob = list(Path(manifest_dir).glob("manifest_trusted_*.json")) if os.path.isdir(manifest_dir) else []
         manifest_glob = []
         manifest_path_obj = Path(manifest_dir)
 
@@ -257,7 +296,6 @@ def process_variable_delivery_teste(
             with open(mf, "r", encoding="utf-8") as fh:
                 trusted_manifest = json.load(fh)
             
-            #trusted_metrics_path = trusted_manifest.get("metrics_path")
             logger_ingestion.info(f"manifesto trusted carregado: {mf}")
         else:
             logger_ingestion.warning(f"manifesto trusted não encontrado em {manifest_dir}")
@@ -285,38 +323,18 @@ def process_variable_delivery_teste(
     if not all_partition_paths:
         logger_ingestion.warning(f"nenhum diretório de partição encontrado com o padrão: {pattern}")
     else:
-        # Spark lê todas as partições
+        # leitura das partições dos datasets
         df_trusted = spark.read.parquet(*all_partition_paths)
         logger_ingestion.info(f"diretórios lidos com sucesso: {len(all_partition_paths)} partições")
 
-        # Se necessário, aplicar filtro year_min/year_max
+        # aplicando filtro year_min/year_max para garantir o período certo para processamento
         if "year" not in df_trusted.columns:
             from pyspark.sql.functions import year as extract_year, month as extract_month
             df_trusted = df_trusted.withColumn("year", extract_year("time"))
             df_trusted = df_trusted.withColumn("month", extract_month("time"))
 
         df_trusted = df_trusted.filter((df_trusted.year >= year_min) & (df_trusted.year <= year_max))
-    '''
-    try:
-        #df_trusted = spark.read.parquet(trusted_path)
-        df_trusted = spark.read.parquet(trusted_data_path)
 
-        logger_ingestion.info(f"diretório lido com sucesso: {trusted_data_path}")
-
-        if df_trusted.count() == 0:
-            logger_ingestion.warning(f"nenhum dado encontrado em {trusted_data_path}")
-            return
-    except Exception as e:
-        logger_ingestion.error(f"erro ao ler parquet em {trusted_data_path}: {e}")
-
-         # fallback: tenta ler input_dir inteiro (antiga lógica), mas loga
-        try:
-            df_trusted = spark.read.parquet(input_dir)
-            logger_ingestion.warning("usando fallback: leitura de input_dir diretamente")
-        except Exception as e2:
-            logger_ingestion.error(f"falha fallback leitura parquet: {e2}")
-            return
-    '''
     # se não houver colunas 'year'/'month' tenta criá-las a partir de 'time' (se existir)
     cols = [c.lower() for c in df_trusted.columns]
     if "year" not in cols or "month" not in cols:
@@ -327,7 +345,7 @@ def process_variable_delivery_teste(
         else:
             logger_ingestion.warning("dados não têm colunas 'time' nem 'year'/'month' — assumindo que já estão agregados")
 
-    # aplicar filtros de ano (opcional) — útil para não processar tudo
+    # aplicando filtros de ano (opcional) — útil para não processar tudo
     if year_list:
         df_trusted = df_trusted.filter(col("year").isin([int(y) for y in year_list]))
         logger_ingestion.info(f"aplicado filtro year_list: {year_list}")
@@ -377,7 +395,7 @@ def process_variable_delivery_teste(
     # array<double> → DenseVector
     df_vector = df_vector.withColumn("features", array_to_vector_udf("grid_list"))
 
-    # salvar feature_map
+    # salvando feature_map
     ###coords_example = df_vector.select("grid_coords").first()["grid_coords"]
     coords_example_row = df_vector.select("grid_coords").first()
     if coords_example_row is None:
@@ -468,43 +486,47 @@ def process_variable_delivery_teste(
                 for i in selected_idx
             }
             })
-        else:
-            lasso_metrics["applied"] = False
-            logger_transform.info("LASSO não aplicado")
+    else:
+        lasso_metrics["applied"] = False
+        logger_transform.info("LASSO não aplicado")
     ##########
-    """
-    # métricas derivadas: entropia média
-    entropy_values = df_vector.select("grid_list").rdd.map(lambda r: compute_entropy(r[0])).collect()
-    entropy_mean = float(np.mean(entropy_values))
-
-    # cálculo da quantidade de linhas e particções do dataframe
-    n_rows = df_vector.count()
-    n_partitions = df_vector.rdd.getNumPartitions()
-
-    # contagem de lat/lon únicos
-    n_lat = df_resampled.select("lat_grid").distinct().count()
-    n_lon = df_resampled.select("lon_grid").distinct().count()
-    n_gridpoints = n_lat * n_lon
-
-    # estatísticas descritivas
-    stats_row = (
-        df_resampled
-        .selectExpr(
-            f"mean({variable_id}_mean) as mean",
-            f"stddev({variable_id}_mean) as std",
-            f"min({variable_id}_mean) as min",
-            f"max({variable_id}_mean) as max"
+    # construindo estrutura de diretórios
+    if not apply_pca_flag and not apply_lasso_flag:
+        # caso: sem PCA e sem LASSO
+        delivery_path = os.path.join(
+            output_dir,
+            f"exp={input_experiment_id}",
+            f"freq={frequency}",
+            f"apply_pca={False}",
+            f"apply_lasso={False}"
         )
-        .first()
-    )
-    """
-    ##########
-        # salvar parquet particionado (exp/freq/year)
-    delivery_path = os.path.join(
-        output_dir,
-        f"exp={input_experiment_id}",
-        f"freq={frequency}"
-    )
+    elif apply_pca_flag and not apply_lasso_flag:
+        # caso: com PCA e sem LASSO
+        delivery_path = os.path.join(
+            output_dir,
+            f"exp={input_experiment_id}",
+            f"freq={frequency}",
+            f"apply_pca={True}",
+            f"apply_lasso={False}"
+        )
+    elif not apply_pca_flag and apply_lasso_flag:
+        # caso: sem PCA e com LASSO
+        delivery_path = os.path.join(
+            output_dir,
+            f"exp={input_experiment_id}",
+            f"freq={frequency}",
+            f"apply_pca={False}",
+            f"apply_lasso={True}"
+        )
+    elif apply_pca_flag and apply_lasso_flag:
+        # caso: com PCA e com LASSO
+        delivery_path = os.path.join(
+            output_dir,
+            f"exp={input_experiment_id}",
+            f"freq={frequency}",
+            f"apply_pca={True}",
+            f"apply_lasso={True}"
+        )
 
     # salvando o dataframe
     (
@@ -519,66 +541,7 @@ def process_variable_delivery_teste(
     end_time = time.time()
     execution_time_seconds = end_time - start_time
     ##########
-    # construção do dicionário de métricas
-    '''
-    metrics = {
-        "meta": {
-            "model": input_model,
-            "variable": variable_id,
-            "experiment": input_experiment_id,
-            "grid_step": grid_step,
-            "n_samples": df_vector.count(),
-            "n_features": len(coords_example),
-            "frequency": frequency
-        },
-        "pca": pca_metrics,
-        "lasso": lasso_metrics,
-        "derived": {"entropy_mean": entropy_mean}
-    }
-    '''
-    '''
-    metrics = {
-        "meta": {
-            "model": input_model,
-            "variable": variable_id,
-            "experiment": input_experiment_id,
-            "grid_step": grid_step,
-            "frequency": frequency
-        },
-
-        "time": {
-            "n_steps": df_resampled.select("year", "month").distinct().count(),
-            "frequency": frequency
-        },
-        "space": {
-            "n_lat": n_lat,
-            "n_lon": n_lon,
-            "n_gridpoints": n_gridpoints
-        },
-        "parquet": {
-            "n_rows": n_rows,
-            "n_partitions": n_partitions
-        },
-        "stats": {
-            "mean": float(stats_row["mean"]),
-            "std": float(stats_row["std"]),
-            "min": float(stats_row["min"]),
-            "max": float(stats_row["max"])
-        },
-        "n_samples": n_rows,
-        "n_features": len(coords_example),
-        "n_partitions": n_partitions,
-        "entropy_mean": entropy_mean,
-        "execution_time_seconds": execution_time_seconds,
-        "pca": pca_metrics,
-        "lasso": lasso_metrics
-    }
-    '''
-    ##########
-    ###compute_delivery_metrics(df_resampled, df_vector, variable_id, input_model, input_experiment_id,
-    ###                         grid_step, frequency, output_dir, pca_metrics, lasso_metrics,
-    ###                         feature_map, start_time, end_time)
-    
+    # construção do dicionário de métrcias
     metrics_delivery = compute_delivery_metrics(
                                     df_resampled=df_resampled,
                                     df_vector=df_vector,
@@ -590,6 +553,8 @@ def process_variable_delivery_teste(
                                     output_dir=output_dir,
                                     pca_metrics=pca_metrics,
                                     lasso_metrics=lasso_metrics,
+                                    apply_pca=apply_pca_flag,
+                                    apply_lasso=apply_lasso_flag,
                                     feature_map=feature_map,
                                     inherited_manifest=trusted_manifest,
                                     start_time=start_time,
@@ -597,7 +562,7 @@ def process_variable_delivery_teste(
                                 )
 
     ##########
-    # salvar manifesto delivery (construir com ligações às camadas anteriores)
+    # construção do manifesto
     # tenta coletar os anos salvos
     saved_years = [int(r["year"]) for r in df_vector.select("year").distinct().collect()]
 
@@ -619,22 +584,56 @@ def process_variable_delivery_teste(
     }
 
     manifest_filename = f"manifest_delivery_{variable_id}_{input_model.lower().replace('-', '_')}_{input_experiment_id}_{frequency}.json"
-    manifest_path = os.path.join(output_dir, f"exp={input_experiment_id}", f"freq={frequency}", "manifest", manifest_filename)
+    if not apply_pca_flag and not apply_lasso_flag:
+        # caso: sem PCA e sem LASSO
+        manifest_path = os.path.join(
+            output_dir,
+            f"exp={input_experiment_id}",
+            f"freq={frequency}",
+            f"apply_pca={False}",
+            f"apply_lasso={False}",
+            "manifest",
+            manifest_filename
+        )
+    elif apply_pca_flag and not apply_lasso_flag:
+        # caso: com PCA e sem LASSO
+        manifest_path = os.path.join(
+            output_dir,
+            f"exp={input_experiment_id}",
+            f"freq={frequency}",
+            f"apply_pca={True}",
+            f"apply_lasso={False}",
+            "manifest",
+            manifest_filename
+        )
+    elif not apply_pca_flag and apply_lasso_flag:
+        # caso: sem PCA e com LASSO
+        manifest_path = os.path.join(
+            output_dir,
+            f"exp={input_experiment_id}",
+            f"freq={frequency}",
+            f"apply_pca={False}",
+            f"apply_lasso={True}",
+            "manifest",
+            manifest_filename
+        )
+    elif apply_pca_flag and apply_lasso_flag:
+        # caso: com PCA e com LASSO
+        manifest_path = os.path.join(
+            output_dir,
+            f"exp={input_experiment_id}",
+            f"freq={frequency}",
+            f"apply_pca={True}",
+            f"apply_lasso={True}",
+            "manifest",
+            manifest_filename
+        )
+        
     os.makedirs(os.path.dirname(manifest_path), exist_ok=True)
+
     with open(manifest_path, "w", encoding="utf-8") as f:
         json.dump(manifest, f, indent=2)
     logger_ingestion.info(f"manifesto delivery salvo em {manifest_path}")
-
-    
-    '''
-    # salvar metrics.json
-    metrics_path = os.path.join(delivery_path, f"metrics_delivery_{variable_id}_{input_model.lower()}_{input_experiment_id}_{frequency}.json")
-
-    with open(metrics_path, "w", encoding="utf-8") as f:
-        json.dump(metrics, f, indent=2)
-
-    logger_ingestion.info(f"métricas salvas em {metrics_path}")
-    '''
 
     ##########
     logger_ingestion.info(f"pipeline concluído | delivery | tempo total de execução da camada delivery: = {execution_time_seconds: .2f}s")
