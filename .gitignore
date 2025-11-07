@@ -214,6 +214,8 @@ __marimo__/
 datasets/*
 notebooks/*.nc
 notebooks/datasets/*.nc*
+notebooks/*.zip*
+notebooks/ne_50m*
 
 /glue_libs/*
 libs.zip
