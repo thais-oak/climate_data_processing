@@ -1,0 +1,16 @@
+{
+  "model": "EC-Earth3",
+  "experiment": "historical",
+  "variable": "tas",
+  "variant_label": "r1i1p1f1",
+  "table_id": "Amon",
+  "frequency": "mon",
+  "downloaded_files": [
+    "tas_Amon_EC-Earth3_historical_r1i1p1f1_gr_191001-191012.nc",
+    "tas_Amon_EC-Earth3_historical_r1i1p1f1_gr_191101-191112.nc"
+  ],
+  "years": [
+    1910,
+    1911
+  ]
+}

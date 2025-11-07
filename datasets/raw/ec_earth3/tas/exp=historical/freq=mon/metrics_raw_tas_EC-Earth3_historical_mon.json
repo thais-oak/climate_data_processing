@@ -1,0 +1,34 @@
+{
+  "time": {
+    "start": "1910-01-16T12:00:00.000000000",
+    "end": "1912-12-16T12:00:00.000000000",
+    "n_steps": 36,
+    "frequency": "mon"
+  },
+  "space": {
+    "n_lat": 256,
+    "n_lon": 512,
+    "n_gridpoints": 131072
+  },
+  "stats": {
+    "mean": 278.2685546875,
+    "std": 20.194150924682617,
+    "min": 212.4059600830078,
+    "max": 313.458984375,
+    "percentiles": {
+      "p1": 225.53617431640626,
+      "p50": 283.6065673828125,
+      "p99": 302.4007794189453
+    }
+  },
+  "parquet": {
+    "n_rows": 4718592,
+    "n_partitions": 3
+  },
+  "meta": {
+    "model": "EC-Earth3",
+    "experiment": "historical",
+    "variable": "tas"
+  },
+  "execution_time_seconds": 24.93344497680664
+}

@@ -1,0 +1,81 @@
+name: CI Trusted Pipeline
+
+on:
+#  push:
+#    branches: [wsl_ci]
+#  pull_request:
+#    branches: [wsl_ci]
+  workflow_dispatch:
+
+jobs:
+  run-trusted:
+    runs-on: ubuntu-latest
+
+    env:
+      MODEL: ec_earth3
+      VAR: tas
+      EXP: historical
+      FREQ: mon
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.12
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+          pip install xarray dask pyarrow numpy
+
+      - name: Prepare dataset directories
+        run: |
+          mkdir -p datasets/raw
+          mkdir -p datasets/trusted
+          mkdir -p datasets/delivery
+
+          echo "Estrutura inicial de datasets:"
+          find datasets -maxdepth 6 -type d
+
+      - name: Populate raw dataset for testing
+        run: |
+          # Copia arquivos de teste (pequenos) já versionados no repo
+          # Ex: datasets/raw_mock/ec_earth3/tas/exp=historical/freq=mon
+          cp -r datasets/raw_mock/${MODEL}/${VAR}/exp=${EXP}/freq=${FREQ} datasets/raw/${MODEL}/${VAR}/exp=${EXP}/freq=${FREQ}
+
+      - name: Run trusted pipeline
+        run: |
+          export PYTHONPATH="${PYTHONPATH}:."
+          python pipeline/main_pipeline.py --stage trusted
+
+      - name: Validate output
+        run: |
+          OUTPUT_DIR="datasets/trusted/${MODEL}/${VAR}/exp=${EXP}/freq=${FREQ}"
+          echo "Validando saída em $OUTPUT_DIR"
+
+          if [ ! -d "$OUTPUT_DIR" ]; then
+            echo "diretório $OUTPUT_DIR não encontrado"
+            exit 1
+          fi
+          echo "diretório de saída encontrado"
+
+          # busca recursiva em year/month(/day)
+          if ! find "$OUTPUT_DIR" -type f -name "*.parquet" | grep -q .; then
+            echo "nenhum arquivo parquet encontrado em $OUTPUT_DIR (nem em subpastas)"
+            exit 1
+          fi
+          echo "arquivo Parquet encontrado"
+
+          # checa se pelo menos um arquivo de métricas foi gerado
+          if ! find "$OUTPUT_DIR" -type f -name "metrics_trusted*.json" | grep -q .; then
+            echo "nenhum metrics_trusted JSON encontrado"
+            exit 1
+          else
+            echo "arquivo metrics_trusted JSON localizado"
+          fi
+
+          echo "estrutura de saída validada com sucesso"

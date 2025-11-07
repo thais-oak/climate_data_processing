@@ -1,0 +1,28 @@
+{
+  "model": "EC-Earth3",
+  "experiment": "historical",
+  "variable": "tas",
+  "variant_label": "r1i1p1f1",
+  "table_id": "Amon",
+  "frequency": "mon",
+  "period": "1910-1912",
+  "downloaded_files": [
+    {
+      "file_name": "tas_Amon_EC-Earth3_historical_r1i1p1f1_gr_191001-191012.nc",
+      "checksum_sha256": "7d368e7dfc5615cecbbb2260ea59f283566cda4c5f3368ab76b6b9c647d99c38"
+    },
+    {
+      "file_name": "tas_Amon_EC-Earth3_historical_r1i1p1f1_gr_191101-191112.nc",
+      "checksum_sha256": "c5ab1ef53fe0fb7c577720563d44448cc1907db622369b45878007c77c0119f4"
+    },
+    {
+      "file_name": "tas_Amon_EC-Earth3_historical_r1i1p1f1_gr_191201-191212.nc",
+      "checksum_sha256": "b3488406ad1def05f06a71524cf758155b66f4e66722f140e0d0c8c3c4aa305d"
+    }
+  ],
+  "years": [
+    1910,
+    1911,
+    1912
+  ]
+}
